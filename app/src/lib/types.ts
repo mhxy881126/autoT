@@ -7,6 +7,12 @@ export interface AlertItem extends AlertEvent {
   read: boolean;
 }
 
+export interface AuditIssue {
+  day: string;
+  symbol: string;
+  count: number;
+}
+
 export interface DeskMeta {
   symbol: string;
   symbolId: string;

@@ -1,3 +1,5 @@
+mod audit;
+mod awake;
 mod commands;
 mod config;
 mod features;
@@ -20,6 +22,12 @@ use state::{AppState, FeedStatus, SeriesCache};
 
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![
             commands::app_info,
@@ -32,6 +40,7 @@ pub fn run() {
             commands::bootstrap,
             commands::series,
             commands::import_statement,
+            commands::audit_report,
             commands::get_config,
             commands::update_config,
             commands::test_notification,
@@ -47,6 +56,7 @@ pub fn run() {
             std::fs::create_dir_all(&dir).expect("create app data dir");
             let conn = store::open(&dir.join("desk.db")).expect("open ledger db");
             let cfg = config::ensure_default(&conn).expect("load config");
+            let audit_issues = audit::unresolved(&conn).unwrap_or_default();
 
             app.manage(AppState {
                 client: market::http_client(),
@@ -63,6 +73,7 @@ pub fn run() {
                 scan_cache: Mutex::new(std::collections::HashMap::new()),
                 scan_fail: Mutex::new(std::collections::HashMap::new()),
                 last_alert: Mutex::new(std::collections::HashMap::new()),
+                audit: Mutex::new(audit_issues),
             });
 
             let handle = app.handle().clone();
@@ -108,6 +119,9 @@ pub fn run() {
                 let mut last_refresh = Instant::now() - Duration::from_secs(120);
 
                 loop {
+                    let trading = session::is_trading_time(&session::now_cn());
+                    awake::set(trading);
+
                     let paused = handle
                         .state::<AppState>()
                         .config
@@ -115,7 +129,7 @@ pub fn run() {
                         .map(|c| c.paused)
                         .unwrap_or(false);
 
-                    if !paused && session::is_trading_time(&session::now_cn()) {
+                    if !paused && trading {
                         let (symbol, client) = {
                             let st = handle.state::<AppState>();
                             let symbol = st

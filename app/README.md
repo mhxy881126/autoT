@@ -3,9 +3,10 @@
 Tauri 2（Rust）+ Vue 3 + TypeScript + Pinia + ECharts。
 一套代码面向 Windows x64 与 macOS（Apple Silicon / Intel 通用二进制）。
 
-> 当前是 **D1–D8 增量**：前端工作台完整可用；Rust 侧行情、SQLite 账本、分时缓存、regime、
-> 信号引擎、T 对配对与冲正、CSV 交割单导入与对账均已接入，并在 Windows MSVC 与 macOS arm64 双平台通过 `cargo test` / `cargo check`。
-> 防休眠、崩溃恢复与安装包尚未接入（D9–D10）。
+> 当前是 **D1–D9 增量**：前端工作台完整可用；Rust 侧行情、SQLite 账本、分时缓存、regime、
+> 信号引擎、T 对配对与冲正、交割单导入与对账、多票自选与批量扫描、托盘与消息中心、
+> 盘中防休眠、单实例与启动完整性检查均已接入，并在 Windows MSVC 与 macOS arm64 双平台通过 `cargo test` / `cargo check`。
+> 安装包、签名与公证尚未接入（D10）。
 
 ![工作台](./shot.png)
 
@@ -16,6 +17,10 @@ Tauri 2（Rust）+ Vue 3 + TypeScript + Pinia + ECharts。
 托盘常驻与应用内消息中心：
 
 ![消息中心](./message-center.png)
+
+启动完整性检查（未闭环 T）：
+
+![启动检查](./audit-banner.png)
 
 ## 快速开始
 
@@ -63,6 +68,9 @@ pnpm tauri dev
 | 信号提醒 | ⚠️ 部分验证 | 系统通知 + 应用内横幅 + 提示音已接入；今日无通过信号未触发真实提醒，设置内提供“测试系统通知” |
 | 托盘常驻 | ✅ 本机验证 | 关闭窗口只隐藏，进程存活；托盘图标存在，菜单含显示/退出 |
 | 应用内消息中心 | ✅ 本机验证 | 测试提醒进入列表并出现未读角标；真实信号走同一事件 |
+| 防休眠 | ⚠️ 部分验证 | 交易时段调用 `SetThreadExecutionState`；macOS 用 `caffeinate -i`；盘后释放。当前盘后无法实测 |
+| 单实例 | ✅ 本机验证 | 启动第二个实例后立即退出，进程数保持 1 |
+| 启动完整性检查 | ✅ 本机验证 | 未闭环 T 在顶栏横幅列出；测试数据已清理 |
 | CI 编译门 | ✅ 全绿 | [run 39245093718](https://github.com/mhxy881126/autoT/actions/runs/39245093718)（17 单测） |
 | 安装包 / macOS 产物 | ❌ 未产出 | 需 Windows MSVC 与 macOS + Xcode，见根目录技术方案 §7 |
 
@@ -130,6 +138,15 @@ app/
 - 保存后写入 SQLite `symbol_configs`，并立即重载该标的的分时、日 K 与信号。
 - 成交与配对表都带 `symbol`：不同股票的 T 对、持仓、未闭环互不串账。
 - 右上角 **怎么用**：6 步操作说明（配置 → 看 regime → 读卡片 → 券商下单 → 回填/导入 → 复盘）。
+
+## D9 稳定性
+
+- **防休眠**：交易时段在 Rust 里调用 Windows `SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED)`，
+  只阻止系统睡眠、不强制亮屏；macOS 启 `caffeinate -i -w <pid>` 子进程。盘后自动释放。
+- **单实例**：`tauri-plugin-single-instance`，第二个实例启动后立即退出并唤起已有窗口，避免双开重复轮询。
+- **启动完整性检查**：启动时查询所有 `status <> 'CLOSED'` 的 T 对，按日 + 标的聚合，在顶栏横幅提示；
+  不自动修改账本，必须人工处理或冲正。
+- 导入本身在事务内，不存在“导入一半”的状态。
 
 ## 已实现的交互
 

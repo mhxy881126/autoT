@@ -9,6 +9,7 @@ use serde_json::json;
 use tauri::Emitter;
 use tauri_plugin_notification::NotificationExt;
 
+use crate::audit::AuditIssue;
 use crate::config::{self, StrategyConfig};
 use crate::features::{self, Bar};
 use crate::ledger::{self, Fill, FillInput, LedgerDay};
@@ -316,6 +317,11 @@ pub async fn series(
         });
     }
     Ok(bars)
+}
+
+#[tauri::command]
+pub fn audit_report(state: tauri::State<'_, AppState>) -> Result<Vec<AuditIssue>, String> {
+    Ok(state.audit.lock().map_err(|e| e.to_string())?.clone())
 }
 
 #[tauri::command]

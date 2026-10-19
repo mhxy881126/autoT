@@ -4,6 +4,7 @@ use std::time::Instant;
 
 use rusqlite::Connection;
 
+use crate::audit::AuditIssue;
 use crate::config::StrategyConfig;
 use crate::features::Bar;
 
@@ -47,4 +48,5 @@ pub struct AppState {
     pub scan_fail: Mutex<HashMap<String, ScanFail>>,
     /// 上一轮扫描每票的通过数，用于只在“新增通过”时提醒。
     pub last_alert: Mutex<HashMap<String, i64>>,
+    pub audit: Mutex<Vec<AuditIssue>>,
 }

@@ -23,6 +23,8 @@ const chg = computed(() => close.value / meta.value.prevClose - 1);
 const posVal = computed(() => close.value * account.value.baseQty);
 const floatPnl = computed(() => (close.value - account.value.baseCost) * account.value.baseQty);
 const hotScans = computed(() => store.scan.filter((s) => s.accepted > 0 && !s.paused));
+const auditTotal = computed(() => store.audit.reduce((sum, a) => sum + a.count, 0));
+const showAudit = ref(true);
 
 async function focusSymbol(symbol: string): Promise<void> {
   try {
@@ -68,6 +70,20 @@ onMounted(() => {
       </span>
       <button class="halt" title="原型未接入交易通道">全局急停</button>
     </header>
+
+    <div v-if="showAudit && store.audit.length" class="audit-bar">
+      <span class="audit-label">启动检查</span>
+      <b>{{ auditTotal }} 笔未闭环 T</b>
+      <span
+        v-for="a in store.audit.slice(0, 3)"
+        :key="a.day + a.symbol"
+        class="audit-item"
+      >
+        {{ a.day }} {{ a.symbol.slice(2) }} ×{{ a.count }}
+      </span>
+      <span v-if="store.audit.length > 3" class="audit-item">…</span>
+      <button class="audit-close" @click="showAudit = false">知道了</button>
+    </div>
 
     <div v-if="hotScans.length" class="signal-bar">
       <span class="sig-label">信号</span>
@@ -243,5 +259,37 @@ onMounted(() => {
   text-align: center;
   margin-left: 4px;
   padding: 0 3px;
+}
+.audit-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: rgba(232, 179, 57, 0.09);
+  border-bottom: 1px solid rgba(232, 179, 57, 0.3);
+  font-size: 11px;
+  color: #c9a24a;
+}
+.audit-label {
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  color: #e8b339;
+}
+.audit-bar b {
+  color: #f0cd7a;
+}
+.audit-item {
+  font-family: Consolas, monospace;
+  color: #9a8452;
+}
+.audit-close {
+  margin-left: auto;
+  background: none;
+  border: 1px solid rgba(232, 179, 57, 0.4);
+  color: #e8b339;
+  border-radius: 3px;
+  padding: 2px 8px;
+  font-size: 10px;
+  cursor: pointer;
 }
 </style>

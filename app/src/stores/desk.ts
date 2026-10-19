@@ -4,6 +4,7 @@ import demoJson from "../data/demo.json";
 import type {
   AlertEvent,
   AlertItem,
+  AuditIssue,
   DeskPayload,
   Fill,
   FillInput,
@@ -31,6 +32,7 @@ export const useDeskStore = defineStore("desk", () => {
   const watchlist = ref<WatchItem[]>([]);
   const scan = ref<WatchScan[]>([]);
   const alerts = ref<AlertItem[]>([]);
+  const audit = ref<AuditIssue[]>([]);
   const unread = computed(() => alerts.value.filter((a) => !a.read).length);
 
   function pushAlert(event: AlertEvent): void {
@@ -86,6 +88,7 @@ export const useDeskStore = defineStore("desk", () => {
         payload.value.meta.conclusion = p.conclusion;
       });
       await subscribeAlerts((a) => pushAlert(a));
+      await loadAudit();
       await loadFills(boot.meta.date);
       await loadLedger(boot.meta.date);
       await loadWatchlist();
@@ -119,6 +122,15 @@ export const useDeskStore = defineStore("desk", () => {
     await reload();
     await loadWatchlist();
     return saved;
+  }
+
+  async function loadAudit(): Promise<void> {
+    if (!isTauri()) return;
+    try {
+      audit.value = await call<AuditIssue[]>("audit_report");
+    } catch (e) {
+      bootError.value = e instanceof Error ? e.message : String(e);
+    }
   }
 
   async function loadWatchlist(): Promise<void> {
@@ -225,10 +237,12 @@ export const useDeskStore = defineStore("desk", () => {
     watchlist,
     scan,
     alerts,
+    audit,
     unread,
     pushAlert,
     markAlertsRead,
     clearAlerts,
+    loadAudit,
     load,
     loadConfig,
     reload,
