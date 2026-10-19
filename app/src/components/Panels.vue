@@ -6,6 +6,7 @@ import { fmt, money } from "../lib/format";
 import { isTauri } from "../lib/ipc";
 import { useDeskStore } from "../stores/desk";
 import BacktestPanel from "./BacktestPanel.vue";
+import JournalPanel from "./JournalPanel.vue";
 
 const props = defineProps<{ payload: DeskPayload }>();
 
@@ -88,10 +89,12 @@ async function onStatementFile(ev: Event): Promise<void> {
   }
 }
 
-type Tab = "signals" | "test" | "book" | "bt";
+type Tab = "signals" | "test" | "book" | "bt" | "journal";
 const hash = typeof location !== "undefined" ? location.hash.replace("#", "") : "";
 const tab = ref<Tab>(
-  hash === "test" || hash === "book" || hash === "bt" ? hash : "signals"
+  hash === "test" || hash === "book" || hash === "bt" || hash === "journal"
+    ? hash
+    : "signals"
 );
 const sensEl = ref<HTMLDivElement | null>(null);
 let sensChart: ReturnType<typeof echarts.init> | null = null;
@@ -192,6 +195,7 @@ onMounted(async () => {
       <button class="tab" :class="{ active: tab === 'test' }" @click="show('test')">门槛压测</button>
       <button class="tab" :class="{ active: tab === 'book' }" @click="show('book')">账务 / 回填</button>
       <button class="tab" :class="{ active: tab === 'bt' }" @click="show('bt')">回测</button>
+      <button class="tab" :class="{ active: tab === 'journal' }" @click="show('journal')">日志</button>
     </div>
 
     <div class="tabbody">
@@ -262,6 +266,10 @@ onMounted(async () => {
 
       <template v-else-if="tab === 'bt'">
         <BacktestPanel />
+      </template>
+
+      <template v-else-if="tab === 'journal'">
+        <JournalPanel />
       </template>
 
       <template v-else>

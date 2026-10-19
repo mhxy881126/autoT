@@ -25,7 +25,10 @@ const form = reactive({
   cooldownMin: 15,
   sessionStart: "09:45",
   sessionEnd: "14:50",
-  paused: false
+  paused: false,
+  dailyLossPct: 1,
+  maxConsecutiveLosses: 3,
+  liquidityCapPct: 1
 });
 
 onMounted(() => {
@@ -45,6 +48,9 @@ onMounted(() => {
   form.sessionStart = c.sessionStart;
   form.sessionEnd = c.sessionEnd;
   form.paused = c.paused;
+  form.dailyLossPct = Math.round(c.dailyLossLimit * 10000) / 100;
+  form.maxConsecutiveLosses = c.maxConsecutiveLosses;
+  form.liquidityCapPct = Math.round(c.liquidityCap * 10000) / 100;
 });
 
 async function save(): Promise<void> {  if (!isTauri()) {
@@ -67,7 +73,10 @@ async function save(): Promise<void> {  if (!isTauri()) {
     cooldownMin: Number(form.cooldownMin),
     sessionStart: form.sessionStart,
     sessionEnd: form.sessionEnd,
-    paused: form.paused
+    paused: form.paused,
+    dailyLossLimit: Number(form.dailyLossPct) / 100,
+    maxConsecutiveLosses: Number(form.maxConsecutiveLosses),
+    liquidityCap: Number(form.liquidityCapPct) / 100
   };
   try {
     await store.saveConfig(next);
@@ -143,6 +152,15 @@ async function testNotify(): Promise<void> {
         </label>
         <label>结束时间
           <input v-model="form.sessionEnd" placeholder="14:50" />
+        </label>
+        <label>日亏损上限（%）
+          <input v-model.number="form.dailyLossPct" type="number" step="0.1" />
+        </label>
+        <label>最大连亏次数
+          <input v-model.number="form.maxConsecutiveLosses" type="number" step="1" />
+        </label>
+        <label>流动性上限（%）
+          <input v-model.number="form.liquidityCapPct" type="number" step="0.1" />
         </label>
         <label class="full check">
           <input v-model="form.paused" type="checkbox" />

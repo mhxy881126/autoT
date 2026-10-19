@@ -18,6 +18,9 @@ pub struct StrategyConfig {
     pub session_start: String,
     pub session_end: String,
     pub paused: bool,
+    pub daily_loss_limit: f64,
+    pub max_consecutive_losses: i64,
+    pub liquidity_cap: f64,
 }
 
 impl Default for StrategyConfig {
@@ -37,6 +40,9 @@ impl Default for StrategyConfig {
             session_start: "09:45".to_string(),
             session_end: "14:50".to_string(),
             paused: false,
+            daily_loss_limit: 0.01,
+            max_consecutive_losses: 3,
+            liquidity_cap: 0.01,
         }
     }
 }
@@ -178,6 +184,15 @@ pub fn validate(cfg: &StrategyConfig) -> Result<(), String> {
     }
     if cfg.session_start >= cfg.session_end {
         return Err("开始时间必须早于结束时间".to_string());
+    }
+    if !(0.001..=0.1).contains(&cfg.daily_loss_limit) {
+        return Err("日亏损上限应在 0.1%–10% 之间".to_string());
+    }
+    if !(1..=20).contains(&cfg.max_consecutive_losses) {
+        return Err("最大连亏次数应在 1–20 之间".to_string());
+    }
+    if !(0.0001..=0.2).contains(&cfg.liquidity_cap) {
+        return Err("流动性上限应在 0.01%–20% 之间".to_string());
     }
     Ok(())
 }

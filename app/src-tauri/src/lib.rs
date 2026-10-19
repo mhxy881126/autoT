@@ -5,9 +5,11 @@ mod commands;
 mod config;
 mod features;
 mod history;
+mod journal;
 mod ledger;
 mod market;
 mod research;
+mod risk;
 mod sample;
 mod session;
 mod state;
@@ -44,6 +46,11 @@ pub fn run() {
             commands::bootstrap,
             commands::series,
             commands::import_statement,
+            commands::journal_upsert,
+            commands::journal_list,
+            commands::journal_delete,
+            commands::journal_stats,
+            commands::risk_state,
             commands::audit_report,
             commands::backtest_day,
             commands::backtest_range,
@@ -172,7 +179,20 @@ pub fn run() {
                                             .lock()
                                             .map(|c| c.clone())
                                             .unwrap_or_default();
-                                        let signals = strategy::scan(&bars, &day_fmt, &cfg);
+                                        let mut signals = strategy::scan(&bars, &day_fmt, &cfg);
+                                        let price = bars.last().map(|b| b.price).unwrap_or(0.0);
+                                        let day_amount =
+                                            raw.last().map(|b| b.cum_amt).unwrap_or(0.0);
+                                        let app_state = handle.state::<AppState>();
+                                        let _ = commands::risk_filter(
+                                            &app_state,
+                                            &cfg,
+                                            &symbol,
+                                            &day_fmt,
+                                            price,
+                                            day_amount,
+                                            &mut signals,
+                                        );
                                         let stats = commands::stats_for(&signals);
 
                                         if let Ok(mut conn) = handle.state::<AppState>().db.lock() {

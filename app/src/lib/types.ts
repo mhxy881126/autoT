@@ -118,6 +118,7 @@ export interface DeskPayload {
   trades: Trade[];
   equity: Array<{ t: string; pnl: number }>;
   stats: DeskStats;
+  risk?: import("../../../contracts/ipc").RiskState;
   scenarios: Scenario[];
   sensitivity: SensitivityRow[];
   last: LastState;

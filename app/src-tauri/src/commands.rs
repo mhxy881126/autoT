@@ -14,9 +14,11 @@ use crate::backtest;
 use crate::config::{self, StrategyConfig};
 use crate::features::{self, Bar};
 use crate::history;
+use crate::journal::{self, JournalEntry, JournalInput, JournalStats};
 use crate::ledger::{self, Fill, FillInput, LedgerDay};
 use crate::market::{self, DayBar, Quote};
 use crate::research;
+use crate::risk::{self, RiskState};
 use crate::sample;
 use crate::session;
 use crate::state::{AppState, FeedStatus, ScanCacheEntry, ScanFail, SeriesCache};
@@ -196,7 +198,17 @@ pub async fn bootstrap(state: tauri::State<'_, AppState>) -> Result<serde_json::
     }
 
     let day_fmt = fmt_day(&day);
-    let signals = strategy::scan(&bars, &day_fmt, &cfg);
+    let mut signals = strategy::scan(&bars, &day_fmt, &cfg);
+    let day_amount = raw.last().map(|b| b.cum_amt).unwrap_or(0.0);
+    let risk_state = risk_filter(
+        &state,
+        &cfg,
+        &symbol,
+        &day_fmt,
+        quote.price,
+        day_amount,
+        &mut signals,
+    );
     {
         let mut conn = state.db.lock().map_err(|e| e.to_string())?;
         let _ = store::save_signals(&mut conn, &day_fmt, &signals);
@@ -280,6 +292,7 @@ pub async fn bootstrap(state: tauri::State<'_, AppState>) -> Result<serde_json::
         "trades": [],
         "equity": [],
         "stats": stats,
+        "risk": risk_state,
         "scenarios": [],
         "sensitivity": [],
         "last": last
@@ -590,6 +603,104 @@ pub fn backtest_research(
         );
     }
     Ok(report)
+}
+
+#[tauri::command]
+pub fn journal_upsert(
+    state: tauri::State<'_, AppState>,
+    input: JournalInput,
+) -> Result<JournalEntry, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    journal::upsert(&conn, &input)
+}
+
+#[tauri::command]
+pub fn journal_list(
+    state: tauri::State<'_, AppState>,
+    day: String,
+    symbol: String,
+) -> Result<Vec<JournalEntry>, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    journal::list(&conn, &day, &symbol)
+}
+
+#[tauri::command]
+pub fn journal_delete(state: tauri::State<'_, AppState>, id: i64) -> Result<(), String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    journal::delete(&conn, id)
+}
+
+#[tauri::command]
+pub fn journal_stats(
+    state: tauri::State<'_, AppState>,
+    day: String,
+    symbol: String,
+) -> Result<JournalStats, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    journal::stats(&conn, &day, &symbol)
+}
+
+/// 风控过滤：阻塞时把当日已通过的信号改成否决，并返回风控状态。
+pub fn risk_filter(
+    state: &AppState,
+    cfg: &StrategyConfig,
+    symbol: &str,
+    day: &str,
+    price: f64,
+    day_amount: f64,
+    signals: &mut Vec<Signal>,
+) -> RiskState {
+    let ledger = state
+        .db
+        .lock()
+        .ok()
+        .and_then(|conn| ledger::day(&conn, day, symbol, cfg.base_qty, cfg.base_cost).ok());
+    let equity = cfg.cash + cfg.base_qty as f64 * price;
+    let risk = match ledger {
+        Some(day) => risk::evaluate(cfg, &day, equity, day_amount, price),
+        None => RiskState {
+            blocked: true,
+            reasons: vec!["无法读取账本，风控降级为禁止开仓".to_string()],
+            ..Default::default()
+        },
+    };
+    if risk.blocked {
+        for signal in signals.iter_mut().filter(|s| s.accepted) {
+            signal.accepted = false;
+            signal
+                .veto
+                .push(format!("风控禁止开仓：{}", risk.reasons.join("；")));
+        }
+    }
+    risk
+}
+
+#[tauri::command]
+pub fn risk_state(
+    state: tauri::State<'_, AppState>,
+    symbol: String,
+    day: String,
+    price: Option<f64>,
+) -> Result<RiskState, String> {
+    let day = day_key(&day);
+    let cfg = {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        config::load_for(&conn, &symbol)
+    };
+    let (last_price, day_amount) = {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        let raw = store::load_minutes(&conn, &symbol, &day)?;
+        let last = raw.last().map(|b| b.price).unwrap_or(0.0);
+        let amount = raw.last().map(|b| b.cum_amt).unwrap_or(0.0);
+        (last, amount)
+    };
+    let price = price.filter(|p| *p > 0.0).unwrap_or(last_price);
+    let ledger_day = {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        ledger::day(&conn, &day, &symbol, cfg.base_qty, cfg.base_cost)?
+    };
+    let equity = cfg.cash + cfg.base_qty as f64 * price;
+    Ok(risk::evaluate(&cfg, &ledger_day, equity, day_amount, price))
 }
 
 #[tauri::command]

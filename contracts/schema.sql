@@ -76,6 +76,25 @@ CREATE TABLE IF NOT EXISTS t_pairs (
 
 CREATE INDEX IF NOT EXISTS idx_pairs_day ON t_pairs (trade_day, symbol, status);
 
+-- 交易日志 v1：每笔 T 的计划、理由、情绪、错误标签
+CREATE TABLE IF NOT EXISTS trade_journal (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  symbol         TEXT    NOT NULL,
+  trade_day      TEXT    NOT NULL,
+  open_fill_id   INTEGER NOT NULL REFERENCES fills(id),
+  close_fill_id  INTEGER          REFERENCES fills(id),
+  planned        INTEGER NOT NULL DEFAULT 1,
+  reason         TEXT,
+  emotion        TEXT,
+  mistakes_json  TEXT    NOT NULL DEFAULT '[]',
+  note           TEXT,
+  created_at     TEXT    NOT NULL,
+  updated_at     TEXT    NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_journal_pair
+  ON trade_journal (symbol, trade_day, open_fill_id, IFNULL(close_fill_id, 0));
+
 -- 信号与否决理由：没有这张表，就无法复盘"为什么没做"
 CREATE TABLE IF NOT EXISTS signals (
   id          TEXT NOT NULL,

@@ -11,6 +11,9 @@ import type {
   FillInput,
   HistoryImportResult,
   ImportResult,
+  JournalEntry,
+  JournalInput,
+  JournalStats,
   LedgerDay,
   MinuteBar,
   MinuteDay,
@@ -39,6 +42,8 @@ export const useDeskStore = defineStore("desk", () => {
   const scan = ref<WatchScan[]>([]);
   const alerts = ref<AlertItem[]>([]);
   const audit = ref<AuditIssue[]>([]);
+  const journal = ref<JournalEntry[]>([]);
+  const journalStats = ref<JournalStats | null>(null);
   const unread = computed(() => alerts.value.filter((a) => !a.read).length);
 
   function pushAlert(event: AlertEvent): void {
@@ -137,6 +142,27 @@ export const useDeskStore = defineStore("desk", () => {
     } catch (e) {
       bootError.value = e instanceof Error ? e.message : String(e);
     }
+  }
+
+  async function loadJournal(day: string, symbol: string): Promise<void> {
+    if (!isTauri()) return;
+    try {
+      journal.value = await call<JournalEntry[]>("journal_list", { day, symbol });
+      journalStats.value = await call<JournalStats>("journal_stats", { day, symbol });
+    } catch (e) {
+      bootError.value = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  async function saveJournal(input: JournalInput): Promise<JournalEntry> {
+    const entry = await call<JournalEntry>("journal_upsert", { input });
+    await loadJournal(input.day, input.symbol);
+    return entry;
+  }
+
+  async function deleteJournal(id: number, day: string, symbol: string): Promise<void> {
+    await call<void>("journal_delete", { id });
+    await loadJournal(day, symbol);
   }
 
   async function loadWatchlist(): Promise<void> {
@@ -284,6 +310,11 @@ export const useDeskStore = defineStore("desk", () => {
     scan,
     alerts,
     audit,
+    journal,
+    journalStats,
+    loadJournal,
+    saveJournal,
+    deleteJournal,
     unread,
     pushAlert,
     markAlertsRead,

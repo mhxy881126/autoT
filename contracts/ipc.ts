@@ -136,6 +136,57 @@ export interface StrategyConfig {
   sessionStart: string;    // "09:45"
   sessionEnd: string;      // "14:50"
   paused: boolean;
+  dailyLossLimit: number;       // 0.01
+  maxConsecutiveLosses: number; // 3
+  liquidityCap: number;         // 0.01
+}
+
+export interface RiskState {
+  blocked: boolean;
+  reasons: string[];
+  dailyPnl: number;
+  dailyLimit: number;
+  consecutiveLosses: number;
+  tradesToday: number;
+  maxTrades: number;
+  positionNotional: number;
+  liquidityCap: number;
+}
+
+export interface JournalInput {
+  symbol: string;
+  day: string;
+  openFillId: number;
+  closeFillId?: number | null;
+  planned: boolean;
+  reason?: string;
+  emotion?: string;
+  mistakes: string[];
+  note?: string;
+}
+
+export interface JournalEntry {
+  id: number;
+  symbol: string;
+  day: string;
+  openFillId: number;
+  closeFillId: number | null;
+  planned: boolean;
+  reason: string | null;
+  emotion: string | null;
+  mistakes: string[];
+  note: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface JournalStats {
+  entries: number;
+  planned: number;
+  unplanned: number;
+  adherence: number;
+  mistakes: Array<{ name: string; count: number }>;
+  emotions: Array<{ name: string; count: number }>;
 }
 
 export type Config = StrategyConfig;

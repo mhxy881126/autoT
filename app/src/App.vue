@@ -85,6 +85,12 @@ onMounted(() => {
       <button class="audit-close" @click="showAudit = false">知道了</button>
     </div>
 
+    <div v-if="payload.risk?.blocked" class="risk-bar">
+      <span class="risk-label">风控</span>
+      <b>禁止开仓</b>
+      <span class="risk-reasons">{{ payload.risk.reasons.join("；") }}</span>
+    </div>
+
     <div v-if="hotScans.length" class="signal-bar">
       <span class="sig-label">信号</span>
       <button
@@ -291,5 +297,26 @@ onMounted(() => {
   padding: 2px 8px;
   font-size: 10px;
   cursor: pointer;
+}
+.risk-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: rgba(239, 83, 80, 0.1);
+  border-bottom: 1px solid rgba(239, 83, 80, 0.35);
+  font-size: 11px;
+  color: #ffb3b1;
+}
+.risk-label {
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  color: #ef5350;
+}
+.risk-bar b {
+  color: #ff8a87;
+}
+.risk-reasons {
+  color: #c98d8b;
 }
 </style>
