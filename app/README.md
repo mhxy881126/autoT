@@ -40,8 +40,8 @@ pnpm tauri dev
 | Rust 行情骨架 | ✅ CI 通过 | Windows MSVC + macOS arm64 `cargo check` 通过 |
 | SQLite 账本 | ✅ CI 通过 | `store.rs` + `ledger.rs`，5 个单测全绿（幂等/自然键/内容冲突/非法输入/汇总） |
 | 回填幂等 | ✅ CI 通过 | `submit_fill` 双唯一键；前端回填表单已接通 |
-| 分时链路 | ⚠️ 待 CI | Rust 拉 242 点 → SQLite 缓存 → 特征/regime → `bootstrap` 直出图表 |
-| CI 编译门 | ✅ 全绿 | [run 39237722576](https://github.com/mhxy881126/autoT/actions/runs/39237722576) |
+| 分时链路 | ✅ CI 通过 | Rust 拉 242 点 → SQLite 缓存 → 特征/regime → `bootstrap` 直出图表 |
+| CI 编译门 | ✅ 全绿 | [run 39239783090](https://github.com/mhxy881126/autoT/actions/runs/39239783090) |
 | 安装包 / macOS 产物 | ❌ 未产出 | 需 Windows MSVC 与 macOS + Xcode，见根目录技术方案 §7 |
 
 **没有伪造验证**：Rust 代码是按 Tauri 2 API 写的，但没有在本机编译过。
@@ -107,7 +107,7 @@ app/
 | 天 | 任务 | 状态 |
 |---|---|---|
 | D3 | SQLite 迁移 + `submit_fill` 幂等 + 账本 | ✅ CI 通过（5 单测） |
-| D4 | 分时落盘 + `series` 命令 + 图表切实时 | 代码完成，待 CI |
+| D4 | 分时落盘 + `series` 命令 + 图表切实时 | ✅ CI 通过（7 单测） |
 | D5 | Rust 特征 + regime + `market:tick` 全字段 | 下一步 |
 | D6 | 信号引擎 + 否决理由落库 | 待做 |
 | D7 | T 对配对 + 未闭环识别 | 待做 |

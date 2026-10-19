@@ -43,10 +43,10 @@ pnpm tauri dev      # 桌面模式，需要 MSVC / Xcode
 | D1 | Tauri 脚手架、单实例、工作台 UI | 部分完成（单实例待加） |
 | D2 | Rust 行情：GB18030 解码、3 秒轮询、事件推送 | 完成（CI 绿） |
 | D3 | SQLite 账本、回填幂等、冲突检测 | 完成（CI 绿，5 单测） |
-| D4 | 分时落盘、`series` 命令、图表切实时 | 下一步 |
-| D5–D10 | 特征/regime、信号、T 对配对、交割单对账、打包 | 待做 |
+| D4 | 分时落盘、`series` 命令、图表切实时 | 完成（CI 绿） |
+| D5–D10 | 信号、T 对配对、交割单对账、打包 | 待做 |
 
-**验证**：前端 `vue-tsc + vite build` 通过；Rust 在 Windows MSVC 与 macOS arm64 双平台通过 `cargo test` + `cargo check`（5 个单测）。CI：[run 39237722576](https://github.com/mhxy881126/autoT/actions/runs/39237722576)。
+**验证**：前端 `vue-tsc + vite build` 通过；Rust 在 Windows MSVC 与 macOS arm64 双平台通过 `cargo test` + `cargo check`（7 个单测）。CI：[run 39239783090](https://github.com/mhxy881126/autoT/actions/runs/39239783090)。
 
 ## 关键设计
 
