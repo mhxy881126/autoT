@@ -43,7 +43,8 @@ pnpm tauri dev
 | 分时链路 | ✅ CI 通过 | Rust 拉 242 点 → SQLite 缓存 → 特征/regime → `bootstrap` 直出图表 |
 | 信号引擎 | ✅ CI 通过 | 4 个单测：回归通过 / 下行禁正T / 薄价差否决 / 冷却 |
 | 信号落库 | ✅ CI 通过 | `signals` 表按 `(trade_day, id)` 去重，否决理由落库可复盘 |
-| CI 编译门 | ✅ 全绿 | [run 39241060068](https://github.com/mhxy881126/autoT/actions/runs/39241060068)（11 单测） |
+| 跨语言一致性 | ✅ CI 通过 | 真实 242 点数据，Rust 与 Python 信号逐条对齐 |
+| CI 编译门 | ✅ 全绿 | [run 39241919794](https://github.com/mhxy881126/autoT/actions/runs/39241919794)（12 单测） |
 | 安装包 / macOS 产物 | ❌ 未产出 | 需 Windows MSVC 与 macOS + Xcode，见根目录技术方案 §7 |
 
 **没有伪造验证**：Rust 代码是按 Tauri 2 API 写的，但没有在本机编译过。
@@ -111,7 +112,7 @@ app/
 | D3 | SQLite 迁移 + `submit_fill` 幂等 + 账本 | ✅ CI 通过（5 单测） |
 | D4 | 分时落盘 + `series` 命令 + 图表切实时 | ✅ CI 通过 |
 | D5 | 特征 + regime + `market:tick` 全字段 | ✅ CI 通过 |
-| D6 | 信号引擎 + 否决理由落库 | ✅ CI 通过（11 单测） |
+| D6 | 信号引擎 + 否决理由落库 | ✅ CI 通过（12 单测） |
 | D7 | T 对配对 + 未闭环识别 + 冲正 | 下一步 |
 | D8 | 交割单导入 + 对账 | 待做 |
 | D9 | 防休眠 + 崩溃恢复 | 待做 |
