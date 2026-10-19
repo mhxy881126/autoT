@@ -11,11 +11,13 @@ import WatchList from "./components/WatchList.vue";
 import SettingsPanel from "./components/SettingsPanel.vue";
 import GuidePanel from "./components/GuidePanel.vue";
 import NotificationCenter from "./components/NotificationCenter.vue";
+import AuditModal from "./components/AuditModal.vue";
 
 const store = useDeskStore();
 const showSettings = ref(false);
 const showGuide = ref(false);
 const showAlerts = ref(false);
+const showAuditLog = ref(false);
 const payload = computed(() => store.payload);
 const meta = computed(() => payload.value.meta);
 const account = computed(() => payload.value.account);
@@ -31,9 +33,11 @@ const health = computed(() => payload.value.health);
 async function toggleHalt(): Promise<void> {
   if (store.emergency) {
     if (!window.confirm("恢复后允许新开仓与提醒，确认？")) return;
-    await store.setEmergencyStop(false);
+    await store.setEmergencyStop(false, "手动恢复");
   } else {
-    await store.setEmergencyStop(true);
+    const reason = window.prompt("急停原因（可留空）");
+    if (reason === null) return;
+    await store.setEmergencyStop(true, reason);
   }
 }
 
@@ -69,6 +73,7 @@ onMounted(() => {
       <button class="ghost bell" @click="showAlerts = true">
         消息<span v-if="store.unread" class="badge">{{ store.unread }}</span>
       </button>
+      <button class="ghost" @click="showAuditLog = true">审计</button>
       <button class="ghost" @click="showGuide = true">怎么用</button>
       <button class="ghost" @click="showSettings = true">设置</button>
       <div class="quote">
@@ -224,6 +229,7 @@ onMounted(() => {
     <SettingsPanel v-if="showSettings" @close="showSettings = false" />
     <GuidePanel v-if="showGuide" @close="showGuide = false" />
     <NotificationCenter v-if="showAlerts" @close="showAlerts = false" />
+    <AuditModal v-if="showAuditLog" @close="showAuditLog = false" />
   </div>
 </template>
 

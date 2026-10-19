@@ -28,7 +28,8 @@ const form = reactive({
   paused: false,
   dailyLossPct: 1,
   maxConsecutiveLosses: 3,
-  liquidityCapPct: 1
+  liquidityCapPct: 1,
+  changeReason: ""
 });
 
 onMounted(() => {
@@ -51,6 +52,7 @@ onMounted(() => {
   form.dailyLossPct = Math.round(c.dailyLossLimit * 10000) / 100;
   form.maxConsecutiveLosses = c.maxConsecutiveLosses;
   form.liquidityCapPct = Math.round(c.liquidityCap * 10000) / 100;
+  form.changeReason = "";
 });
 
 async function save(): Promise<void> {  if (!isTauri()) {
@@ -79,7 +81,7 @@ async function save(): Promise<void> {  if (!isTauri()) {
     liquidityCap: Number(form.liquidityCapPct) / 100
   };
   try {
-    await store.saveConfig(next);
+    await store.saveConfig(next, form.changeReason || undefined);
     emit("close");
   } catch (e) {
     err.value = e instanceof Error ? e.message : String(e);
@@ -165,6 +167,9 @@ async function testNotify(): Promise<void> {
         <label class="full check">
           <input v-model="form.paused" type="checkbox" />
           暂停策略（仍显示行情，不生成新信号）
+        </label>
+        <label class="full">修改理由（可选，写入审计）
+          <input v-model="form.changeReason" placeholder="为什么调整参数" />
         </label>
       </div>
 

@@ -127,6 +127,20 @@ CREATE TABLE IF NOT EXISTS plan_audit (
 CREATE INDEX IF NOT EXISTS idx_plan_audit
   ON plan_audit (trade_day, symbol, id);
 
+-- 操作审计：急停、配置修改
+CREATE TABLE IF NOT EXISTS action_audit (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  action      TEXT    NOT NULL,          -- emergency / config
+  target      TEXT    NOT NULL,          -- global / symbol
+  changed_at  TEXT    NOT NULL,
+  reason      TEXT,
+  before_json TEXT,
+  after_json  TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_action_audit
+  ON action_audit (action, id);
+
 -- 信号与否决理由：没有这张表，就无法复盘"为什么没做"
 CREATE TABLE IF NOT EXISTS signals (
   id          TEXT NOT NULL,

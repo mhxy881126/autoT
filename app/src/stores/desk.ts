@@ -2,6 +2,7 @@ import { defineStore } from "pinia";
 import { computed, ref } from "vue";
 import demoJson from "../data/demo.json";
 import type {
+  ActionAudit,
   AlertEvent,
   AlertItem,
   AuditIssue,
@@ -64,6 +65,7 @@ export const useDeskStore = defineStore("desk", () => {
   const journal = ref<JournalEntry[]>([]);
   const journalStats = ref<JournalStats | null>(null);
   const planAudit = ref<PlanAudit[]>([]);
+  const actionAudit = ref<ActionAudit[]>([]);
   const unread = computed(() => alerts.value.filter((a) => !a.read).length);
 
   function pushAlert(event: AlertEvent): void {
@@ -158,8 +160,8 @@ export const useDeskStore = defineStore("desk", () => {
     await loadLedger(boot.meta.date);
   }
 
-  async function saveConfig(next: StrategyConfig): Promise<StrategyConfig> {
-    const saved = await call<StrategyConfig>("update_config", { next });
+  async function saveConfig(next: StrategyConfig, reason?: string): Promise<StrategyConfig> {
+    const saved = await call<StrategyConfig>("update_config", { next, reason });
     config.value = saved;
     await reload();
     await loadWatchlist();
@@ -191,11 +193,16 @@ export const useDeskStore = defineStore("desk", () => {
     return call<PrecheckResult>("precheck_order", { input });
   }
 
-  async function setEmergencyStop(active: boolean): Promise<boolean> {
-    const next = await call<boolean>("set_emergency_stop", { active });
+  async function setEmergencyStop(active: boolean, reason?: string): Promise<boolean> {
+    const next = await call<boolean>("set_emergency_stop", { active, reason });
     emergency.value = next;
     if (payload.value.health) payload.value.health.emergency = next;
     return next;
+  }
+
+  async function loadActionAudit(): Promise<void> {
+    if (!isTauri()) return;
+    actionAudit.value = await call<ActionAudit[]>("action_audit_list", { limit: 100 });
   }
 
   async function loadJournal(day: string, symbol: string): Promise<void> {
@@ -391,6 +398,8 @@ export const useDeskStore = defineStore("desk", () => {
     savePlan,
     planAudit,
     loadPlanAudit,
+    actionAudit,
+    loadActionAudit,
     journal,
     journalStats,
     loadJournal,

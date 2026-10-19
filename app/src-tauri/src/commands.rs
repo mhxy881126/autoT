@@ -11,6 +11,7 @@ use tauri::Emitter;
 use tauri_plugin_notification::NotificationExt;
 
 use crate::audit::AuditIssue;
+use crate::audit_log::{self, ActionAudit};
 use crate::backtest;
 use crate::calendar;
 use crate::config::{self, StrategyConfig};
@@ -961,9 +962,41 @@ pub fn market_health(state: tauri::State<'_, AppState>) -> MarketHealth {
 }
 
 #[tauri::command]
-pub fn set_emergency_stop(state: tauri::State<'_, AppState>, active: bool) -> bool {
-    state.emergency.store(active, Ordering::SeqCst);
+pub fn set_emergency_stop(
+    state: tauri::State<'_, AppState>,
+    active: bool,
+    reason: Option<String>,
+) -> bool {
+    let before = state.emergency.swap(active, Ordering::SeqCst);
+    if before != active {
+        if let Ok(conn) = state.db.lock() {
+            let reason = reason.filter(|r| !r.trim().is_empty()).unwrap_or_else(|| {
+                if active {
+                    "手动急停".to_string()
+                } else {
+                    "手动恢复".to_string()
+                }
+            });
+            let _ = audit_log::log(
+                &conn,
+                "emergency",
+                "global",
+                Some(&reason),
+                Some(serde_json::json!(before)),
+                Some(serde_json::json!(active)),
+            );
+        }
+    }
     active
+}
+
+#[tauri::command]
+pub fn action_audit_list(
+    state: tauri::State<'_, AppState>,
+    limit: Option<i64>,
+) -> Result<Vec<ActionAudit>, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    audit_log::list(&conn, limit.unwrap_or(100))
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -1299,11 +1332,32 @@ pub fn test_notification(app: tauri::AppHandle) -> Result<(), String> {
 pub fn update_config(
     state: tauri::State<'_, AppState>,
     next: StrategyConfig,
+    reason: Option<String>,
 ) -> Result<StrategyConfig, String> {
     config::validate(&next)?;
+    let reason = reason
+        .filter(|r| !r.trim().is_empty())
+        .unwrap_or_else(|| "设置页保存".to_string());
     {
         let conn = state.db.lock().map_err(|e| e.to_string())?;
-        config::save(&conn, &next)?;
+        let before = config::load_for(&conn, &next.symbol);
+        let before_val = serde_json::to_value(&before).map_err(|e| e.to_string())?;
+        let after_val = serde_json::to_value(&next).map_err(|e| e.to_string())?;
+        let tx = conn
+            .unchecked_transaction()
+            .map_err(|e| format!("开启配置事务失败: {e}"))?;
+        config::save(&tx, &next)?;
+        if before_val != after_val {
+            audit_log::log(
+                &tx,
+                "config",
+                &next.symbol,
+                Some(&reason),
+                Some(before_val),
+                Some(after_val),
+            )?;
+        }
+        tx.commit().map_err(|e| format!("提交配置失败: {e}"))?;
     }
     *state.config.lock().map_err(|e| e.to_string())? = next.clone();
     *state.symbol.lock().map_err(|e| e.to_string())? = next.symbol.clone();

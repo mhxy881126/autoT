@@ -1,4 +1,5 @@
 mod audit;
+mod audit_log;
 mod awake;
 mod backtest;
 mod calendar;
@@ -59,6 +60,7 @@ pub fn run() {
             commands::daily_plan_save,
             commands::plan_audit_list,
             commands::set_emergency_stop,
+            commands::action_audit_list,
             commands::precheck_order,
             commands::audit_report,
             commands::backtest_day,

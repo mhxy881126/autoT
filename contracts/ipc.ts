@@ -160,6 +160,16 @@ export interface PlanAudit {
   after: DailyPlan;
 }
 
+export interface ActionAudit {
+  id: number;
+  action: string;
+  target: string;
+  changedAt: string;
+  reason: string | null;
+  before: Record<string, unknown> | boolean | null;
+  after: Record<string, unknown> | boolean | null;
+}
+
 export interface MarketHealth {
   phase: string;
   tradingDay: boolean;
