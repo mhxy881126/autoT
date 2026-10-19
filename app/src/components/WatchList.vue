@@ -18,7 +18,7 @@ async function add(): Promise<void> {
   try {
     await store.addSymbol(symbol);
     input.value = "";
-    await store.scanWatchlist();
+    await refreshScan(false);
   } catch (e) {
     msg.value = e instanceof Error ? e.message : String(e);
   } finally {
@@ -55,13 +55,48 @@ function scanOf(symbol: string) {
   return store.scan.find((s) => s.symbol === symbol) ?? null;
 }
 
+let prevAccepted = -1;
+
+function totalAccepted(): number {
+  return store.scan.reduce((sum, s) => sum + (s.paused ? 0 : s.accepted), 0);
+}
+
+function beep(): void {
+  try {
+    const Ctx =
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!Ctx) return;
+    const ctx = new Ctx();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.value = 880;
+    gain.gain.value = 0.06;
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.16);
+    setTimeout(() => void ctx.close(), 400);
+  } catch {
+    // 音频不可用时静默，不影响扫描
+  }
+}
+
+async function refreshScan(sound: boolean): Promise<void> {
+  await store.scanWatchlist();
+  const total = totalAccepted();
+  if (sound && prevAccepted >= 0 && total > prevAccepted) beep();
+  prevAccepted = total;
+}
+
 onMounted(() => {
-  void store.loadWatchlist().then(() => store.scanWatchlist());
+  void store.loadWatchlist().then(() => refreshScan(false));
   listTimer = setInterval(() => {
     if (!busy.value) void store.loadWatchlist();
   }, 30000);
   scanTimer = setInterval(() => {
-    if (!busy.value) void store.scanWatchlist();
+    if (!busy.value) void refreshScan(true);
   }, 60000);
 });
 

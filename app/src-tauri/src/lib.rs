@@ -18,6 +18,7 @@ use state::{AppState, FeedStatus, SeriesCache};
 
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![
             commands::app_info,
             commands::fetch_quote,
@@ -31,6 +32,7 @@ pub fn run() {
             commands::import_statement,
             commands::get_config,
             commands::update_config,
+            commands::test_notification,
             commands::list_watchlist,
             commands::scan_watchlist,
             commands::add_symbol,
@@ -57,6 +59,7 @@ pub fn run() {
                 series: Mutex::new(None),
                 scan_cache: Mutex::new(std::collections::HashMap::new()),
                 scan_fail: Mutex::new(std::collections::HashMap::new()),
+                last_alert: Mutex::new(std::collections::HashMap::new()),
             });
 
             let handle = app.handle().clone();

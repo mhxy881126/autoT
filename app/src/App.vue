@@ -20,6 +20,15 @@ const close = computed(() => store.last.price);
 const chg = computed(() => close.value / meta.value.prevClose - 1);
 const posVal = computed(() => close.value * account.value.baseQty);
 const floatPnl = computed(() => (close.value - account.value.baseCost) * account.value.baseQty);
+const hotScans = computed(() => store.scan.filter((s) => s.accepted > 0 && !s.paused));
+
+async function focusSymbol(symbol: string): Promise<void> {
+  try {
+    await store.switchSymbol(symbol);
+  } catch {
+    // 切换失败时保持当前票，错误由 store.bootError 呈现
+  }
+}
 
 const REGIME_DOT: Record<string, string> = {
   上行: "#ef5350",
@@ -54,6 +63,19 @@ onMounted(() => {
       </span>
       <button class="halt" title="原型未接入交易通道">全局急停</button>
     </header>
+
+    <div v-if="hotScans.length" class="signal-bar">
+      <span class="sig-label">信号</span>
+      <button
+        v-for="s in hotScans"
+        :key="s.symbol"
+        class="sig-item"
+        @click="focusSymbol(s.symbol)"
+      >
+        <b>{{ s.name || s.symbol }}</b> · {{ s.accepted }} 个 · {{ s.signalSide }}
+        {{ s.signalT }}
+      </button>
+    </div>
 
     <section class="strip">
       <div class="cell">
@@ -174,5 +196,30 @@ onMounted(() => {
 }
 .main {
   grid-template-columns: 190px minmax(0, 1fr) 420px;
+}
+.signal-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: rgba(239, 83, 80, 0.08);
+  border-bottom: 1px solid rgba(239, 83, 80, 0.3);
+}
+.sig-label {
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  color: #ef5350;
+}
+.sig-item {
+  background: #1a1214;
+  border: 1px solid rgba(239, 83, 80, 0.4);
+  color: #ffb3b1;
+  border-radius: 4px;
+  padding: 4px 9px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.sig-item b {
+  color: #ffffff;
 }
 </style>

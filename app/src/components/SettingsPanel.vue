@@ -1,13 +1,15 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from "vue";
 import type { StrategyConfig } from "../lib/types";
-import { isTauri } from "../lib/ipc";
+import { call, isTauri } from "../lib/ipc";
 import { useDeskStore } from "../stores/desk";
 
 const emit = defineEmits<{ (e: "close"): void }>();
 const store = useDeskStore();
 const saving = ref(false);
 const err = ref("");
+const testing = ref(false);
+const testMsg = ref("");
 
 const form = reactive({
   symbol: "sh600519",
@@ -45,8 +47,7 @@ onMounted(() => {
   form.paused = c.paused;
 });
 
-async function save(): Promise<void> {
-  if (!isTauri()) {
+async function save(): Promise<void> {  if (!isTauri()) {
     err.value = "浏览器模式不能保存配置，请在桌面端操作";
     return;
   }
@@ -75,6 +76,22 @@ async function save(): Promise<void> {
     err.value = e instanceof Error ? e.message : String(e);
   } finally {
     saving.value = false;
+  }
+}
+async function testNotify(): Promise<void> {
+  if (!isTauri()) {
+    testMsg.value = "仅桌面端可测试系统通知";
+    return;
+  }
+  testing.value = true;
+  testMsg.value = "";
+  try {
+    await call<void>("test_notification");
+    testMsg.value = "已发送，请检查系统通知";
+  } catch (e) {
+    testMsg.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    testing.value = false;
   }
 }
 </script>
@@ -140,11 +157,15 @@ async function save(): Promise<void> {
       <div v-if="err" class="err">{{ err }}</div>
 
       <div class="actions">
+        <button class="ghost" :disabled="testing" @click="testNotify">
+          {{ testing ? "发送中…" : "测试系统通知" }}
+        </button>
         <button class="ghost" @click="emit('close')">取消</button>
         <button class="primary" :disabled="saving" @click="save">
           {{ saving ? "保存中…" : "保存并重载" }}
         </button>
       </div>
+      <div v-if="testMsg" class="hint">{{ testMsg }}</div>
     </div>
   </div>
 </template>

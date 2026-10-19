@@ -45,4 +45,6 @@ pub struct AppState {
     pub series: Mutex<Option<SeriesCache>>,
     pub scan_cache: Mutex<HashMap<String, ScanCacheEntry>>,
     pub scan_fail: Mutex<HashMap<String, ScanFail>>,
+    /// 上一轮扫描每票的通过数，用于只在“新增通过”时提醒。
+    pub last_alert: Mutex<HashMap<String, i64>>,
 }

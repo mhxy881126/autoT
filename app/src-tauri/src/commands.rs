@@ -6,6 +6,8 @@ use rusqlite::params;
 use serde::Serialize;
 use serde_json::json;
 
+use tauri_plugin_notification::NotificationExt;
+
 use crate::config::{self, StrategyConfig};
 use crate::features::{self, Bar};
 use crate::ledger::{self, Fill, FillInput, LedgerDay};
@@ -321,6 +323,16 @@ pub fn get_config(state: tauri::State<'_, AppState>) -> Result<StrategyConfig, S
 }
 
 #[tauri::command]
+pub fn test_notification(app: tauri::AppHandle) -> Result<(), String> {
+    app.notification()
+        .builder()
+        .title("做T信号 · 测试")
+        .body("系统通知可用。真实信号通过时会这样提醒。")
+        .show()
+        .map_err(|e| format!("发送通知失败: {e}"))
+}
+
+#[tauri::command]
 pub fn update_config(
     state: tauri::State<'_, AppState>,
     next: StrategyConfig,
@@ -497,7 +509,10 @@ fn minute_key(quote: Option<&market::Quote>) -> String {
 
 /// 批量扫描自选：每只票独立参数；缓存命中直接复用，未命中并发拉取。
 #[tauri::command]
-pub async fn scan_watchlist(state: tauri::State<'_, AppState>) -> Result<Vec<WatchScan>, String> {
+pub async fn scan_watchlist(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<WatchScan>, String> {
     let (symbols, configs) = {
         let conn = state.db.lock().map_err(|e| e.to_string())?;
         let symbols = config::list(&conn)?;
@@ -663,6 +678,43 @@ pub async fn scan_watchlist(state: tauri::State<'_, AppState>) -> Result<Vec<Wat
             cached,
             stale: stale_symbols.get(symbol).copied().unwrap_or(false),
         });
+    }
+
+    // 只在“通过数增加”时发系统通知；首轮只建立基线，避免启动即轰炸。
+    {
+        let mut last = state.last_alert.lock().map_err(|e| e.to_string())?;
+        if !last.is_empty() {
+            for item in &out {
+                let prev = last.get(&item.symbol).copied().unwrap_or(0);
+                if item.paused || item.accepted <= prev {
+                    continue;
+                }
+                let label = if item.name.is_empty() {
+                    item.symbol.clone()
+                } else {
+                    item.name.clone()
+                };
+                let side = item.signal_side.clone().unwrap_or_default();
+                let t = item.signal_t.clone().unwrap_or_default();
+                let body = match item.signal_target {
+                    Some(target) => format!(
+                        "{label} {} 个信号 {side} {t} 目标 {target:.2}",
+                        item.accepted
+                    ),
+                    None => format!("{label} {} 个信号 {side} {t}", item.accepted),
+                };
+                let _ = app
+                    .notification()
+                    .builder()
+                    .title("做T信号")
+                    .body(body)
+                    .show();
+            }
+        }
+        last.clear();
+        for item in &out {
+            last.insert(item.symbol.clone(), item.accepted);
+        }
     }
 
     Ok(out)
