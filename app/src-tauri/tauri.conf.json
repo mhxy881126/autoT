@@ -41,6 +41,9 @@
       "icons/icon.icns"
     ],
     "windows": {
+      "wix": {
+        "language": "zh-CN"
+      },
       "nsis": {
         "installMode": "currentUser",
         "languages": ["SimpChinese", "English"]
