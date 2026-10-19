@@ -1,5 +1,6 @@
 mod audit;
 mod awake;
+mod backtest;
 mod commands;
 mod config;
 mod features;
@@ -41,6 +42,7 @@ pub fn run() {
             commands::series,
             commands::import_statement,
             commands::audit_report,
+            commands::backtest_day,
             commands::get_config,
             commands::update_config,
             commands::test_notification,
@@ -165,7 +167,8 @@ pub fn run() {
                                         let stats = commands::stats_for(&signals);
 
                                         if let Ok(mut conn) = handle.state::<AppState>().db.lock() {
-                                            let _ = store::save_minutes(&mut conn, &day, &raw);
+                                            let _ =
+                                                store::save_minutes(&mut conn, &symbol, &day, &raw);
                                             let _ =
                                                 store::save_signals(&mut conn, &day_fmt, &signals);
                                         }

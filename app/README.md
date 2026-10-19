@@ -71,6 +71,8 @@ pnpm tauri dev
 | 防休眠 | ⚠️ 部分验证 | 交易时段调用 `SetThreadExecutionState`；macOS 用 `caffeinate -i`；盘后释放。当前盘后无法实测 |
 | 单实例 | ✅ 本机验证 | 启动第二个实例后立即退出，进程数保持 1 |
 | 启动完整性检查 | ✅ 本机验证 | 未闭环 T 在顶栏横幅列出；测试数据已清理 |
+| 多标的分时缓存 | ✅ 单测 + 真机 | `minute_raw` 主键含 `symbol`，旧库自动迁移；实测两只票各 242 根 |
+| 回测引擎 v1 | ⚠️ 单测通过 | 单日回测：费用、滑点、T+1 可卖额度、收盘触发；历史数据导入与 UI 未做 |
 | Windows 安装包 | ✅ CI 构建 | NSIS 2.8MB + MSI 3.6MB，已从 CI 下载；本机 NSIS 解压被杀软拦截 |
 | macOS universal dmg | ✅ CI 构建 | 6.8MB，覆盖 Apple Silicon + Intel；未真机安装 |
 | 签名 / 公证 | ❌ 未执行 | 需要 Windows 证书与 Apple 开发者账号 |
@@ -149,6 +151,18 @@ app/
 - Windows：`pnpm tauri build --bundles nsis,msi`
 - macOS：`pnpm tauri build --target universal-apple-darwin --bundles dmg`
 - CI：`.github/workflows/release.yml`，`workflow_dispatch` 或 `v*` tag 触发
+
+## v0.2 回测基础
+
+- `minute_raw` 主键改为 `(symbol, trade_day, t)`，旧库自动重建并迁移；多标的分时不再互相覆盖。
+- 数据层：`store::save_minutes/load_minutes` 均按标的读写。
+- 回测层：`backtest::run_day`，口径为
+  - 信号分钟收盘生成，下一根分钟收盘成交
+  - 目标/止损用后续分钟收盘触发，按目标/止损价成交
+  - 佣金（最低 5 元）、印花税、过户费、双边 2bp 滑点
+  - T+1：每次 T 消耗底仓可卖额度，当天不回补
+  - 同一时间只允许一笔 T，未平仓前跳过新信号
+- Tauri 命令：`backtest_day(symbol, day, prevClose?)`，读取本地缓存分钟数据并返回交易明细与汇总。
 
 ## D9 稳定性
 

@@ -47,12 +47,13 @@ CREATE INDEX IF NOT EXISTS idx_fills_day ON fills (symbol, trade_day, ts);
 
 -- D4：原始分时缓存。存原始累计量，特征始终由代码重算，避免缓存派生值后口径漂移。
 CREATE TABLE IF NOT EXISTS minute_raw (
+  symbol        TEXT    NOT NULL,
   trade_day     TEXT    NOT NULL,
   t             TEXT    NOT NULL,          -- "09:30"
   price_cents   INTEGER NOT NULL,
   cum_vol       INTEGER NOT NULL,          -- 手，累计
   cum_amt_cents INTEGER NOT NULL,          -- 元 * 100，累计
-  PRIMARY KEY (trade_day, t)
+  PRIMARY KEY (symbol, trade_day, t)
 );
 
 -- 做T配对：正T=先买后卖，倒T=先卖后买

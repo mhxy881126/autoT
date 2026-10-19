@@ -10,6 +10,7 @@ use tauri::Emitter;
 use tauri_plugin_notification::NotificationExt;
 
 use crate::audit::AuditIssue;
+use crate::backtest;
 use crate::config::{self, StrategyConfig};
 use crate::features::{self, Bar};
 use crate::ledger::{self, Fill, FillInput, LedgerDay};
@@ -168,7 +169,7 @@ pub async fn bootstrap(state: tauri::State<'_, AppState>) -> Result<serde_json::
 
     {
         let mut conn = state.db.lock().map_err(|e| e.to_string())?;
-        let _ = store::save_minutes(&mut conn, &day, &raw);
+        let _ = store::save_minutes(&mut conn, &symbol, &day, &raw);
     }
 
     let bars = features::build(&raw, quote.prev_close);
@@ -304,7 +305,7 @@ pub async fn series(
 
     {
         let mut conn = state.db.lock().map_err(|e| e.to_string())?;
-        let _ = store::save_minutes(&mut conn, &d, &raw);
+        let _ = store::save_minutes(&mut conn, &symbol, &d, &raw);
     }
 
     let bars = features::build(&raw, quote.prev_close);
@@ -322,6 +323,36 @@ pub async fn series(
 #[tauri::command]
 pub fn audit_report(state: tauri::State<'_, AppState>) -> Result<Vec<AuditIssue>, String> {
     Ok(state.audit.lock().map_err(|e| e.to_string())?.clone())
+}
+
+/// 单日回测：读取本地缓存的分钟数据，按当前标的参数跑一遍。
+#[tauri::command]
+pub fn backtest_day(
+    state: tauri::State<'_, AppState>,
+    symbol: String,
+    day: String,
+    prev_close: Option<f64>,
+) -> Result<backtest::BacktestResult, String> {
+    let (cfg, raw) = {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        let cfg = config::load_for(&conn, &symbol);
+        let raw = store::load_minutes(&conn, &symbol, &day)?;
+        (cfg, raw)
+    };
+    if raw.is_empty() {
+        return Err(format!("{symbol} {day} 没有历史分钟数据，请先导入/缓存"));
+    }
+    let pc = prev_close.unwrap_or(0.0);
+    let prev_close = if pc > 0.0 { pc } else { raw[0].price };
+    let bars = features::build(&raw, prev_close);
+    Ok(backtest::run_day(
+        &symbol,
+        &day,
+        &bars,
+        &cfg,
+        &backtest::FeeModel::default(),
+        cfg.cash,
+    ))
 }
 
 #[tauri::command]

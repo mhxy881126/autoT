@@ -25,26 +25,78 @@ pub fn open(path: &Path) -> Result<Connection, String> {
          CREATE INDEX IF NOT EXISTS idx_fills_day ON fills (symbol, trade_day, ts);
          CREATE INDEX IF NOT EXISTS idx_pairs_day ON t_pairs (trade_day, symbol, status);",
     );
+    migrate_minutes_symbol(&conn);
     Ok(conn)
 }
 
-/// 覆盖写入某日原始分时。先删后插，保证重算时没有残留旧点。
-pub fn save_minutes(conn: &mut Connection, day: &str, raw: &[RawBar]) -> Result<(), String> {
+/// 旧库的 minute_raw 主键只有 (trade_day,t)，多标的分时会互相覆盖。
+/// SQLite 不能改主键，只能重建表；旧数据没有 symbol，统一标成空串。
+fn migrate_minutes_symbol(conn: &Connection) {
+    let has_symbol = conn
+        .prepare("PRAGMA table_info(minute_raw)")
+        .and_then(|mut stmt| {
+            let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+            let mut found = false;
+            for row in rows {
+                if row? == "symbol" {
+                    found = true;
+                }
+            }
+            Ok(found)
+        })
+        .unwrap_or(true);
+    if has_symbol {
+        return;
+    }
+
+    let migrated = conn.execute_batch(
+        "BEGIN IMMEDIATE;
+         ALTER TABLE minute_raw RENAME TO minute_raw_old;
+         CREATE TABLE minute_raw (
+           symbol        TEXT    NOT NULL,
+           trade_day     TEXT    NOT NULL,
+           t             TEXT    NOT NULL,
+           price_cents   INTEGER NOT NULL,
+           cum_vol       INTEGER NOT NULL,
+           cum_amt_cents INTEGER NOT NULL,
+           PRIMARY KEY (symbol, trade_day, t)
+         );
+         INSERT INTO minute_raw (symbol, trade_day, t, price_cents, cum_vol, cum_amt_cents)
+           SELECT '', trade_day, t, price_cents, cum_vol, cum_amt_cents FROM minute_raw_old;
+         DROP TABLE minute_raw_old;
+         COMMIT;",
+    );
+    if migrated.is_err() {
+        let _ = conn.execute_batch("ROLLBACK;");
+    }
+}
+
+/// 覆盖写入某标的某日原始分时。先删后插，保证重算时没有残留旧点。
+pub fn save_minutes(
+    conn: &mut Connection,
+    symbol: &str,
+    day: &str,
+    raw: &[RawBar],
+) -> Result<(), String> {
     let tx = conn
         .transaction()
         .map_err(|e| format!("开启事务失败: {e}"))?;
-    tx.execute("DELETE FROM minute_raw WHERE trade_day = ?1", params![day])
-        .map_err(|e| format!("清理分时失败: {e}"))?;
+    tx.execute(
+        "DELETE FROM minute_raw WHERE symbol = ?1 AND trade_day = ?2",
+        params![symbol, day],
+    )
+    .map_err(|e| format!("清理分时失败: {e}"))?;
 
     {
         let mut stmt = tx
             .prepare(
-                "INSERT INTO minute_raw (trade_day, t, price_cents, cum_vol, cum_amt_cents)
-                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                "INSERT INTO minute_raw (symbol, trade_day, t, price_cents, cum_vol, cum_amt_cents)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             )
             .map_err(|e| format!("准备分时写入失败: {e}"))?;
         for bar in raw {
             stmt.execute(params![
+                symbol,
                 day,
                 &bar.t,
                 (bar.price * 100.0).round() as i64,
@@ -58,16 +110,16 @@ pub fn save_minutes(conn: &mut Connection, day: &str, raw: &[RawBar]) -> Result<
     tx.commit().map_err(|e| format!("提交分时失败: {e}"))
 }
 
-pub fn load_minutes(conn: &Connection, day: &str) -> Result<Vec<RawBar>, String> {
+pub fn load_minutes(conn: &Connection, symbol: &str, day: &str) -> Result<Vec<RawBar>, String> {
     let mut stmt = conn
         .prepare(
             "SELECT t, price_cents, cum_vol, cum_amt_cents
-             FROM minute_raw WHERE trade_day = ?1 ORDER BY t",
+             FROM minute_raw WHERE symbol = ?1 AND trade_day = ?2 ORDER BY t",
         )
         .map_err(|e| e.to_string())?;
 
     let rows = stmt
-        .query_map(params![day], |row| {
+        .query_map(params![symbol, day], |row| {
             Ok(RawBar {
                 t: row.get(0)?,
                 price: row.get::<_, i64>(1)? as f64 / 100.0,
@@ -128,4 +180,68 @@ pub fn save_signals(conn: &mut Connection, day: &str, signals: &[Signal]) -> Res
     }
 
     tx.commit().map_err(|e| format!("提交信号失败: {e}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn raw(t: &str, price: f64, cum_vol: i64) -> RawBar {
+        RawBar {
+            t: t.to_string(),
+            price,
+            cum_vol,
+            cum_amt: price * cum_vol as f64 * 100.0,
+        }
+    }
+
+    #[test]
+    fn minutes_are_scoped_by_symbol() {
+        let mut c = Connection::open_in_memory().expect("memory db");
+        c.execute_batch(include_str!("../../../contracts/schema.sql"))
+            .expect("schema");
+
+        save_minutes(&mut c, "sh600519", "2026-10-19", &[raw("09:30", 10.0, 100)]).expect("save a");
+        save_minutes(&mut c, "sz000858", "2026-10-19", &[raw("09:30", 20.0, 200)]).expect("save b");
+
+        let a = load_minutes(&c, "sh600519", "2026-10-19").expect("load a");
+        let b = load_minutes(&c, "sz000858", "2026-10-19").expect("load b");
+        assert_eq!(a.len(), 1);
+        assert_eq!(b.len(), 1);
+        assert!((a[0].price - 10.0).abs() < 1e-9);
+        assert!((b[0].price - 20.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn legacy_minute_table_is_rebuilt_with_symbol() {
+        let c = Connection::open_in_memory().expect("memory db");
+        c.execute_batch(
+            "CREATE TABLE minute_raw (
+               trade_day TEXT NOT NULL,
+               t TEXT NOT NULL,
+               price_cents INTEGER NOT NULL,
+               cum_vol INTEGER NOT NULL,
+               cum_amt_cents INTEGER NOT NULL,
+               PRIMARY KEY (trade_day, t)
+             );
+             INSERT INTO minute_raw VALUES ('2026-10-18', '09:30', 1000, 100, 100000);",
+        )
+        .expect("legacy schema");
+
+        migrate_minutes_symbol(&c);
+
+        let rows = load_minutes(&c, "", "2026-10-18").expect("load migrated");
+        assert_eq!(rows.len(), 1);
+        assert!((rows[0].price - 10.0).abs() < 1e-9);
+
+        let mut c = c;
+        save_minutes(&mut c, "sh600519", "2026-10-18", &[raw("09:30", 11.0, 100)])
+            .expect("save after migration");
+        assert_eq!(
+            load_minutes(&c, "sh600519", "2026-10-18")
+                .expect("load new")
+                .len(),
+            1
+        );
+    }
 }
