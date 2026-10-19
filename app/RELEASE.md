@@ -95,6 +95,24 @@ APPLE_TEAM_ID="TEAMID"
 - macOS：universal dmg
 - 未配置 Apple secrets 时自动走未签名分支
 - 产物通过 `actions/upload-artifact` 上传
+- 推送 `v*` tag 时，`publish` job 会创建 GitHub Release 并上传三个安装包
+
+发布一个版本：
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+Release 资产统一用 ASCII 文件名：
+
+```
+TTradeDesk_0.1.0_x64-setup.exe
+TTradeDesk_0.1.0_x64.msi
+TTradeDesk_0.1.0_universal.dmg
+```
+
+已发布：https://github.com/mhxy881126/autoT/releases/tag/v0.1.0
 
 需要配置的仓库 secrets：
 

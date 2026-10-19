@@ -109,8 +109,14 @@ jobs:
         with:
           path: dist
           merge-multiple: true
-      - name: List release files
-        run: find dist -maxdepth 3 -type f -print
+      - name: Normalize asset names
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          mkdir -p upload
+          cp dist/nsis/*.exe "upload/TTradeDesk_${VERSION}_x64-setup.exe"
+          cp dist/msi/*.msi "upload/TTradeDesk_${VERSION}_x64.msi"
+          cp dist/*.dmg "upload/TTradeDesk_${VERSION}_universal.dmg"
+          ls -l upload
       - uses: softprops/action-gh-release@v2
         with:
           name: 做T决策台 ${{ github.ref_name }}
@@ -120,9 +126,6 @@ jobs:
             - Windows：NSIS / MSI（未签名）
             - macOS：universal dmg，覆盖 Apple Silicon 与 Intel（未签名、未公证）
             - 当前不含自动更新，请手动下载安装
-          files: |
-            dist/nsis/*.exe
-            dist/msi/*.msi
-            dist/*.dmg
+          files: upload/*
           fail_on_unmatched_files: true
           generate_release_notes: false
