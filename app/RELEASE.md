@@ -12,11 +12,14 @@ cd /d app
 pnpm tauri build --bundles nsis,msi
 ```
 
-产物：
+> 本机实测：release 可执行文件能正常构建，但 Tauri 下载/解压 NSIS 工具时被杀软拦截
+> （`PermissionDenied`），本地没有产出安装包。安装包以 CI 产物为准。
+
+CI 产物：
 
 ```
-app/src-tauri/target/release/bundle/nsis/做T决策台_0.1.0_x64-setup.exe
-app/src-tauri/target/release/bundle/msi/做T决策台_0.1.0_x64_en-US.msi
+windows-installers/nsis/做T决策台_0.1.0_x64-setup.exe
+windows-installers/msi/做T决策台_0.1.0_x64_zh-CN.msi
 ```
 
 ### macOS
@@ -106,7 +109,9 @@ Windows 证书暂未接入 CI；如需签名，在 `tauri.conf.json` 填指纹�
 
 ## 当前边界
 
-- Windows 安装包已在本机构建验证；macOS dmg 仅由 CI 构建，未在真机安装验证
+- Windows NSIS + MSI、macOS universal dmg 均由 CI 构建并通过 artifact 上传
+- Windows 安装包未在本机安装验证（本机打包工具解压被杀软拦截）
+- macOS dmg 未在真机安装验证
 - 没有 Apple 开发者证书，公证流程未实际执行
 - 没有 Windows 代码签名证书，安装包未签名
 - 未接入自动更新（updater）

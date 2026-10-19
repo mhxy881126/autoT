@@ -71,8 +71,8 @@ pnpm tauri dev
 | 防休眠 | ⚠️ 部分验证 | 交易时段调用 `SetThreadExecutionState`；macOS 用 `caffeinate -i`；盘后释放。当前盘后无法实测 |
 | 单实例 | ✅ 本机验证 | 启动第二个实例后立即退出，进程数保持 1 |
 | 启动完整性检查 | ✅ 本机验证 | 未闭环 T 在顶栏横幅列出；测试数据已清理 |
-| Windows 安装包 | ✅ 本机构建 | NSIS + MSI，产物在 `src-tauri/target/release/bundle` |
-| macOS universal dmg | ⚠️ CI 构建 | `release.yml` 产出，未在真机安装验证 |
+| Windows 安装包 | ✅ CI 构建 | NSIS 2.8MB + MSI 3.6MB，已从 CI 下载；本机 NSIS 解压被杀软拦截 |
+| macOS universal dmg | ✅ CI 构建 | 6.8MB，覆盖 Apple Silicon + Intel；未真机安装 |
 | 签名 / 公证 | ❌ 未执行 | 需要 Windows 证书与 Apple 开发者账号 |
 | CI 编译门 | ✅ 全绿 | [run 39245093718](https://github.com/mhxy881126/autoT/actions/runs/39245093718)（17 单测） |
 | 安装包 / macOS 产物 | ❌ 未产出 | 需 Windows MSVC 与 macOS + Xcode，见根目录技术方案 §7 |
