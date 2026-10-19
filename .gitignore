@@ -1,0 +1,16 @@
+# Node
+app/node_modules/
+app/dist/
+app/.vite/
+
+# Rust
+app/src-tauri/target/
+app/src-tauri/gen/
+
+# Python
+__pycache__/
+*.pyc
+
+# OS
+.DS_Store
+Thumbs.db
