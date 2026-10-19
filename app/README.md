@@ -9,6 +9,10 @@ Tauri 2（Rust）+ Vue 3 + TypeScript + Pinia + ECharts。
 
 ![工作台](./shot.png)
 
+多票自选与按标的隔离的账务：
+
+![多票自选](./multi-symbol.png)
+
 ## 快速开始
 
 ```bash
