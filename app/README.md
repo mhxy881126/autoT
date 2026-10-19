@@ -3,10 +3,10 @@
 Tauri 2（Rust）+ Vue 3 + TypeScript + Pinia + ECharts。
 一套代码面向 Windows x64 与 macOS（Apple Silicon / Intel 通用二进制）。
 
-> 当前是 **D1–D9 增量**：前端工作台完整可用；Rust 侧行情、SQLite 账本、分时缓存、regime、
+> 当前是 **D1–D10 增量**：前端工作台完整可用；Rust 侧行情、SQLite 账本、分时缓存、regime、
 > 信号引擎、T 对配对与冲正、交割单导入与对账、多票自选与批量扫描、托盘与消息中心、
 > 盘中防休眠、单实例与启动完整性检查均已接入，并在 Windows MSVC 与 macOS arm64 双平台通过 `cargo test` / `cargo check`。
-> 安装包、签名与公证尚未接入（D10）。
+> 安装包已能在本机产出；签名与公证需要证书，尚未执行。
 
 ![工作台](./shot.png)
 
@@ -71,6 +71,9 @@ pnpm tauri dev
 | 防休眠 | ⚠️ 部分验证 | 交易时段调用 `SetThreadExecutionState`；macOS 用 `caffeinate -i`；盘后释放。当前盘后无法实测 |
 | 单实例 | ✅ 本机验证 | 启动第二个实例后立即退出，进程数保持 1 |
 | 启动完整性检查 | ✅ 本机验证 | 未闭环 T 在顶栏横幅列出；测试数据已清理 |
+| Windows 安装包 | ✅ 本机构建 | NSIS + MSI，产物在 `src-tauri/target/release/bundle` |
+| macOS universal dmg | ⚠️ CI 构建 | `release.yml` 产出，未在真机安装验证 |
+| 签名 / 公证 | ❌ 未执行 | 需要 Windows 证书与 Apple 开发者账号 |
 | CI 编译门 | ✅ 全绿 | [run 39245093718](https://github.com/mhxy881126/autoT/actions/runs/39245093718)（17 单测） |
 | 安装包 / macOS 产物 | ❌ 未产出 | 需 Windows MSVC 与 macOS + Xcode，见根目录技术方案 §7 |
 
@@ -138,6 +141,14 @@ app/
 - 保存后写入 SQLite `symbol_configs`，并立即重载该标的的分时、日 K 与信号。
 - 成交与配对表都带 `symbol`：不同股票的 T 对、持仓、未闭环互不串账。
 - 右上角 **怎么用**：6 步操作说明（配置 → 看 regime → 读卡片 → 券商下单 → 回填/导入 → 复盘）。
+
+## 打包
+
+见 [RELEASE.md](./RELEASE.md)。
+
+- Windows：`pnpm tauri build --bundles nsis,msi`
+- macOS：`pnpm tauri build --target universal-apple-darwin --bundles dmg`
+- CI：`.github/workflows/release.yml`，`workflow_dispatch` 或 `v*` tag 触发
 
 ## D9 稳定性
 
