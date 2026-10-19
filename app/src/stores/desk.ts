@@ -5,12 +5,15 @@ import type {
   AlertEvent,
   AlertItem,
   AuditIssue,
+  BacktestResult,
   DeskPayload,
   Fill,
   FillInput,
+  HistoryImportResult,
   ImportResult,
   LedgerDay,
   MinuteBar,
+  Scorecard,
   Snapshot,
   StrategyConfig,
   WatchItem,
@@ -172,6 +175,34 @@ export const useDeskStore = defineStore("desk", () => {
     await loadWatchlist();
   }
 
+  const minuteDays = ref<string[]>([]);
+
+  async function loadMinuteDays(symbol: string): Promise<string[]> {
+    if (!isTauri()) return [];
+    const days = await call<string[]>("list_minute_days", { symbol });
+    minuteDays.value = days;
+    return days;
+  }
+
+  async function importMinutesCsv(
+    symbol: string,
+    bytes: number[]
+  ): Promise<HistoryImportResult> {
+    return call<HistoryImportResult>("import_minutes_csv", { symbol, bytes });
+  }
+
+  async function backtestDay(
+    symbol: string,
+    day: string,
+    prevClose?: number
+  ): Promise<BacktestResult> {
+    return call<BacktestResult>("backtest_day", { symbol, day, prevClose });
+  }
+
+  async function backtestRange(symbol: string, days: string[]): Promise<Scorecard> {
+    return call<Scorecard>("backtest_range", { symbol, days });
+  }
+
   function activeSymbol(): string {
     return config.value?.symbol ?? payload.value.meta.symbolId ?? "";
   }
@@ -252,6 +283,11 @@ export const useDeskStore = defineStore("desk", () => {
     switchSymbol,
     addSymbol,
     removeSymbol,
+    minuteDays,
+    loadMinuteDays,
+    importMinutesCsv,
+    backtestDay,
+    backtestRange,
     loadFills,
     loadLedger,
     submitFill,

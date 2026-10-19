@@ -22,6 +22,10 @@ Tauri 2（Rust）+ Vue 3 + TypeScript + Pinia + ECharts。
 
 ![启动检查](./audit-banner.png)
 
+回测页（单日/区间）：
+
+![回测](./backtest-ui.png)
+
 ## 快速开始
 
 ```bash
@@ -72,7 +76,7 @@ pnpm tauri dev
 | 单实例 | ✅ 本机验证 | 启动第二个实例后立即退出，进程数保持 1 |
 | 启动完整性检查 | ✅ 本机验证 | 未闭环 T 在顶栏横幅列出；测试数据已清理 |
 | 多标的分时缓存 | ✅ 单测 + 真机 | `minute_raw` 主键含 `symbol`，旧库自动迁移；实测两只票各 242 根 |
-| 回测引擎 v1 | ✅ 单测通过 | 单日/多日回测：限价撮合、费用、滑点、T+1 可卖额度、收盘触发；CSV 历史分钟导入 |
+| 回测引擎 v1 | ✅ 单测 + 真机 UI | 单日/多日回测：限价撮合、费用、滑点、T+1；CSV 导入；右栏「回测」页 |
 | Windows 安装包 | ✅ CI 构建 | NSIS 2.8MB + MSI 3.6MB，已从 CI 下载；本机 NSIS 解压被杀软拦截 |
 | macOS universal dmg | ✅ CI 构建 | 6.8MB，覆盖 Apple Silicon + Intel；未真机安装 |
 | 签名 / 公证 | ❌ 未执行 | 需要 Windows 证书与 Apple 开发者账号 |
@@ -164,10 +168,12 @@ app/
   - 同一时间只允许一笔 T，未平仓前跳过新信号
 - 多日记分卡：`backtest::scorecard`，输出逐日净收益、胜率、盈亏比、最大回撤、no-trade 天数、与“不做”基线差。
 - Tauri 命令：
-  - `import_minutes_csv(symbol, csv)`：CSV 列 `day,time,price,cum_vol,cum_amt`，按天覆盖写入
+  - `import_minutes_csv(symbol, bytes)`：CSV 列 `day,time,price,cum_vol,cum_amt`，按天覆盖写入
   - `backtest_day(symbol, day, prevClose?)`
   - `backtest_range(symbol, days)`：按日期顺序跑多日，未缓存日期跳过
-- 历史数据限制：目前只支持 CSV 导入；分钟点没有 OHLC，目标/止损按收盘价触发；没有 UI。
+  - `list_minute_days(symbol)`：回测页的已缓存日期
+- 右栏 **回测** 页：CSV 导入、已缓存日期、单日结果、区间记分卡。
+- 历史数据限制：目前只支持 CSV 导入；分钟点没有 OHLC，目标/止损按收盘价触发。
 
 ## D9 稳定性
 

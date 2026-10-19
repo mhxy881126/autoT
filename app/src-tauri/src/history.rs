@@ -8,7 +8,19 @@
 
 use std::collections::BTreeMap;
 
+use encoding_rs::GB18030;
+
 use crate::market::RawBar;
+
+pub fn decode(bytes: &[u8]) -> String {
+    match std::str::from_utf8(bytes) {
+        Ok(text) => text.trim_start_matches('\u{feff}').to_string(),
+        Err(_) => {
+            let (text, _, _) = GB18030.decode(bytes);
+            text.trim_start_matches('\u{feff}').to_string()
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct ParsedHistory {

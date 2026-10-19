@@ -109,6 +109,16 @@ pub(crate) fn fmt_day(d: &str) -> String {
     }
 }
 
+/// 接受 "2026-10-19" 或 "20261019"，统一成数据库里的 YYYYMMDD。
+pub(crate) fn day_key(raw: &str) -> String {
+    let digits: String = raw.chars().filter(|c| c.is_ascii_digit()).collect();
+    if digits.len() == 8 {
+        digits
+    } else {
+        raw.to_string()
+    }
+}
+
 fn moving_avg(daily: &[DayBar], i: usize, n: usize) -> Option<f64> {
     if i + 1 >= n {
         let sum: f64 = daily[i + 1 - n..=i].iter().map(|x| x.c).sum();
@@ -334,13 +344,14 @@ pub struct HistoryImportResult {
 pub fn import_minutes_csv(
     state: tauri::State<'_, AppState>,
     symbol: String,
-    csv: String,
+    bytes: Vec<u8>,
 ) -> Result<HistoryImportResult, String> {
     let symbol = symbol.trim().to_lowercase();
     if symbol.len() != 8 {
         return Err("标的代码格式应为 sh600519 / sz000858".to_string());
     }
-    let parsed = history::parse_csv(&csv)?;
+    let text = history::decode(&bytes);
+    let parsed = history::parse_csv(&text)?;
     let mut conn = state.db.lock().map_err(|e| e.to_string())?;
     let mut days = 0i64;
     for (day, raw) in &parsed.days {
@@ -355,6 +366,25 @@ pub fn import_minutes_csv(
     })
 }
 
+#[tauri::command]
+pub fn list_minute_days(
+    state: tauri::State<'_, AppState>,
+    symbol: String,
+) -> Result<Vec<String>, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare("SELECT DISTINCT trade_day FROM minute_raw WHERE symbol = ?1 ORDER BY trade_day")
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map(params![symbol], |row| row.get::<_, String>(0))
+        .map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row.map_err(|e| e.to_string())?);
+    }
+    Ok(out)
+}
+
 /// 多日回测记分卡：按日期顺序读取缓存分钟，未缓存的日期会被跳过。
 #[tauri::command]
 pub fn backtest_range(
@@ -366,7 +396,7 @@ pub fn backtest_range(
         let conn = state.db.lock().map_err(|e| e.to_string())?;
         config::load_for(&conn, &symbol)
     };
-    let mut days = days;
+    let mut days: Vec<String> = days.iter().map(|d| day_key(d)).collect();
     days.sort();
     days.dedup();
 
@@ -421,6 +451,7 @@ pub fn backtest_day(
     day: String,
     prev_close: Option<f64>,
 ) -> Result<backtest::BacktestResult, String> {
+    let day = day_key(&day);
     let (cfg, raw) = {
         let conn = state.db.lock().map_err(|e| e.to_string())?;
         let cfg = config::load_for(&conn, &symbol);

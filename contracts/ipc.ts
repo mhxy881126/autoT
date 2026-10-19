@@ -176,6 +176,87 @@ export interface WatchScan {
   stale: boolean;
 }
 
+export interface BacktestTrade {
+  signalId: string;
+  side: string;
+  entryT: string;
+  entryPrice: number;
+  exitT: string;
+  exitPrice: number;
+  qty: number;
+  gross: number;
+  fees: number;
+  slippage: number;
+  net: number;
+  exitReason: string;
+  barsHeld: number;
+  maePct: number;
+  mfePct: number;
+}
+
+export interface BacktestSummary {
+  trades: number;
+  wins: number;
+  losses: number;
+  gross: number;
+  fees: number;
+  slippage: number;
+  net: number;
+  winRate: number;
+  profitFactor: number;
+  maxDrawdown: number;
+  maxDrawdownPct: number;
+  avgHoldMin: number;
+}
+
+export interface BacktestResult {
+  symbol: string;
+  day: string;
+  trades: BacktestTrade[];
+  summary: BacktestSummary;
+  skipped: string[];
+  cashEnd: number;
+  availableBase: number;
+  startEquity: number;
+}
+
+export interface DayNet {
+  day: string;
+  trades: number;
+  net: number;
+  fees: number;
+  slippage: number;
+  noTrade: boolean;
+}
+
+export interface Scorecard {
+  symbol: string;
+  days: number;
+  daysWithTrades: number;
+  noTradeDays: number;
+  trades: number;
+  wins: number;
+  losses: number;
+  gross: number;
+  fees: number;
+  slippage: number;
+  net: number;
+  winRate: number;
+  profitFactor: number;
+  maxDrawdown: number;
+  maxDrawdownPct: number;
+  avgNetPerDay: number;
+  edgeVsNoTrade: number;
+  daily: DayNet[];
+}
+
+export interface HistoryImportResult {
+  symbol: string;
+  days: number;
+  rows: number;
+  skipped: number;
+}
+
 export interface FeedStatus {
   connected: boolean;
   source: "tencent" | "sina" | "none";

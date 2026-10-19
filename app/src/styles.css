@@ -11,7 +11,8 @@
     overflow:hidden;
   }
   button{font-family:inherit}
-  .app{display:grid;grid-template-rows:52px 70px 1fr 30px;height:100vh}
+  .app{display:flex;flex-direction:column;height:100vh;min-height:0;overflow:hidden}
+  .topbar,.strip,.statusbar{flex:0 0 auto}
 
   /* ---------- top bar ---------- */
   .topbar{display:flex;align-items:center;gap:16px;padding:0 16px;border-bottom:1px solid var(--line);background:linear-gradient(180deg,#0d1119,#0a0d13)}
@@ -40,7 +41,7 @@
   .dot{width:7px;height:7px;border-radius:50%;display:inline-block}
 
   /* ---------- layout ---------- */
-  .main{display:grid;grid-template-columns:minmax(0,1fr) 420px;gap:10px;padding:10px;min-height:0}
+  .main{display:grid;grid-template-columns:minmax(0,1fr) 420px;gap:10px;padding:10px;min-height:0;flex:1 1 auto}
   .left{display:grid;grid-template-rows:1.45fr 1fr;gap:10px;min-height:0}
   .panel{background:var(--panel);border:1px solid var(--line);border-radius:8px;position:relative;min-height:0;overflow:hidden}
   .panel-head{position:absolute;inset:0 0 auto 0;height:32px;display:flex;align-items:center;gap:12px;padding:0 12px;border-bottom:1px solid rgba(29,36,49,.7);background:linear-gradient(180deg,rgba(17,22,32,.95),rgba(17,22,32,.6));z-index:2}

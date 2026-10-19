@@ -46,6 +46,7 @@ pub fn run() {
             commands::backtest_day,
             commands::backtest_range,
             commands::import_minutes_csv,
+            commands::list_minute_days,
             commands::get_config,
             commands::update_config,
             commands::test_notification,
