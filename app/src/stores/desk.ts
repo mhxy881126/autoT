@@ -10,7 +10,8 @@ import type {
   MinuteBar,
   Snapshot,
   StrategyConfig,
-  WatchItem
+  WatchItem,
+  WatchScan
 } from "../lib/types";
 import { call, isTauri, subscribeSignals, subscribeTick } from "../lib/ipc";
 
@@ -26,6 +27,7 @@ export const useDeskStore = defineStore("desk", () => {
   const ledger = ref<LedgerDay | null>(null);
   const config = ref<StrategyConfig | null>(null);
   const watchlist = ref<WatchItem[]>([]);
+  const scan = ref<WatchScan[]>([]);
 
   const minutes = computed<MinuteBar[]>(() => {
     const base = payload.value.minutes.slice();
@@ -99,6 +101,15 @@ export const useDeskStore = defineStore("desk", () => {
     if (!isTauri()) return;
     try {
       watchlist.value = await call<WatchItem[]>("list_watchlist");
+    } catch (e) {
+      bootError.value = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  async function scanWatchlist(): Promise<void> {
+    if (!isTauri()) return;
+    try {
+      scan.value = await call<WatchScan[]>("scan_watchlist");
     } catch (e) {
       bootError.value = e instanceof Error ? e.message : String(e);
     }
@@ -188,11 +199,13 @@ export const useDeskStore = defineStore("desk", () => {
     ledger,
     config,
     watchlist,
+    scan,
     load,
     loadConfig,
     reload,
     saveConfig,
     loadWatchlist,
+    scanWatchlist,
     switchSymbol,
     addSymbol,
     removeSymbol,

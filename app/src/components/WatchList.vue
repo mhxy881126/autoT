@@ -7,7 +7,8 @@ const store = useDeskStore();
 const input = ref("");
 const msg = ref("");
 const busy = ref(false);
-let timer: ReturnType<typeof setInterval> | null = null;
+let listTimer: ReturnType<typeof setInterval> | null = null;
+let scanTimer: ReturnType<typeof setInterval> | null = null;
 
 async function add(): Promise<void> {
   const symbol = input.value.trim().toLowerCase();
@@ -17,6 +18,7 @@ async function add(): Promise<void> {
   try {
     await store.addSymbol(symbol);
     input.value = "";
+    await store.scanWatchlist();
   } catch (e) {
     msg.value = e instanceof Error ? e.message : String(e);
   } finally {
@@ -49,15 +51,23 @@ async function remove(symbol: string): Promise<void> {
   }
 }
 
+function scanOf(symbol: string) {
+  return store.scan.find((s) => s.symbol === symbol) ?? null;
+}
+
 onMounted(() => {
-  void store.loadWatchlist();
-  timer = setInterval(() => {
+  void store.loadWatchlist().then(() => store.scanWatchlist());
+  listTimer = setInterval(() => {
     if (!busy.value) void store.loadWatchlist();
   }, 30000);
+  scanTimer = setInterval(() => {
+    if (!busy.value) void store.scanWatchlist();
+  }, 60000);
 });
 
 onBeforeUnmount(() => {
-  if (timer) clearInterval(timer);
+  if (listTimer) clearInterval(listTimer);
+  if (scanTimer) clearInterval(scanTimer);
 });
 </script>
 
@@ -100,6 +110,21 @@ onBeforeUnmount(() => {
         <div class="meta">
           {{ item.baseQty }} 股
           <span v-if="item.paused" class="paused">暂停</span>
+        </div>
+        <div v-if="scanOf(item.symbol)" class="scan">
+          <span class="regime">{{ scanOf(item.symbol)?.regime }}</span>
+          <span v-if="scanOf(item.symbol)?.paused" class="paused">不扫描</span>
+          <span v-else-if="(scanOf(item.symbol)?.accepted ?? 0) > 0" class="hot">
+            {{ scanOf(item.symbol)?.accepted }} 个信号
+          </span>
+          <span v-else class="idle">无信号 · {{ scanOf(item.symbol)?.candidates }} 候选</span>
+          <span
+            v-if="(scanOf(item.symbol)?.accepted ?? 0) > 0"
+            class="detail"
+            :title="`${scanOf(item.symbol)?.signalSide} ${scanOf(item.symbol)?.signalT}`"
+          >
+            {{ scanOf(item.symbol)?.signalSide }} {{ scanOf(item.symbol)?.signalT }}
+          </span>
         </div>
         <button class="del" title="移出自选" @click.stop="remove(item.symbol)">×</button>
       </div>
@@ -218,6 +243,27 @@ onBeforeUnmount(() => {
 .paused {
   color: #e8b339;
   margin-left: 4px;
+}
+.scan {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 3px;
+  font-size: 9px;
+}
+.regime {
+  color: #76839a;
+}
+.hot {
+  color: #ef5350;
+  font-weight: 600;
+}
+.idle {
+  color: #4d5a70;
+}
+.detail {
+  color: #e8b339;
+  font-family: Consolas, monospace;
 }
 .del {
   position: absolute;

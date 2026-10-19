@@ -149,6 +149,20 @@ export interface WatchItem {
   paused: boolean;
 }
 
+export interface WatchScan {
+  symbol: string;
+  name: string;
+  price: number;
+  changePct: number;
+  regime: string;
+  candidates: number;
+  accepted: number;
+  paused: boolean;
+  signalSide: string | null;
+  signalT: string | null;
+  signalTarget: number | null;
+}
+
 export interface FeedStatus {
   connected: boolean;
   source: "tencent" | "sina" | "none";

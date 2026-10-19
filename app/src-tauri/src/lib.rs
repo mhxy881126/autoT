@@ -32,6 +32,7 @@ pub fn run() {
             commands::get_config,
             commands::update_config,
             commands::list_watchlist,
+            commands::scan_watchlist,
             commands::add_symbol,
             commands::set_symbol,
             commands::remove_symbol

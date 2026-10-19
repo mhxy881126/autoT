@@ -456,3 +456,95 @@ pub async fn list_watchlist(state: tauri::State<'_, AppState>) -> Result<Vec<Wat
         })
         .collect())
 }
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WatchScan {
+    pub symbol: String,
+    pub name: String,
+    pub price: f64,
+    pub change_pct: f64,
+    pub regime: String,
+    pub candidates: i64,
+    pub accepted: i64,
+    pub paused: bool,
+    pub signal_side: Option<String>,
+    pub signal_t: Option<String>,
+    pub signal_target: Option<f64>,
+}
+
+/// 批量扫描自选：每只票各自 regime、候选数、通过数；不落库，只供列表展示。
+#[tauri::command]
+pub async fn scan_watchlist(state: tauri::State<'_, AppState>) -> Result<Vec<WatchScan>, String> {
+    let (symbols, configs) = {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        let symbols = config::list(&conn)?;
+        let mut configs: HashMap<String, StrategyConfig> = HashMap::new();
+        for symbol in &symbols {
+            configs.insert(symbol.clone(), config::load_for(&conn, symbol));
+        }
+        (symbols, configs)
+    };
+
+    let quotes = market::fetch_quotes(&state.client, &symbols)
+        .await
+        .unwrap_or_default();
+    let map: HashMap<String, market::Quote> =
+        quotes.into_iter().map(|q| (q.symbol.clone(), q)).collect();
+
+    let mut out = Vec::new();
+    for symbol in &symbols {
+        let cfg = configs.get(symbol).cloned().unwrap_or_default();
+        let quote = map.get(symbol);
+        let mut regime = "震荡".to_string();
+        let mut candidates = 0i64;
+        let mut accepted = 0i64;
+        let mut signal_side = None;
+        let mut signal_t = None;
+        let mut signal_target = None;
+
+        if !cfg.paused {
+            if let Ok((_day, raw)) = market::fetch_minute(&state.client, symbol).await {
+                if !raw.is_empty() {
+                    let prev_close = quote.map(|q| q.prev_close).unwrap_or(0.0);
+                    let bars = features::build(&raw, prev_close);
+                    if let Some(last) = bars.last() {
+                        regime = last.regime.clone();
+                    }
+                    let signals = strategy::scan(&bars, "live", &cfg);
+                    candidates = signals.len() as i64;
+                    accepted = signals.iter().filter(|s| s.accepted).count() as i64;
+                    if let Some(sig) = signals.iter().rev().find(|s| s.accepted) {
+                        signal_side = Some(sig.side.clone());
+                        signal_t = Some(sig.t.clone());
+                        signal_target = Some(sig.target);
+                    }
+                }
+            }
+        }
+
+        out.push(WatchScan {
+            symbol: symbol.clone(),
+            name: quote.map(|q| q.name.clone()).unwrap_or_default(),
+            price: quote.map(|q| q.price).unwrap_or(0.0),
+            change_pct: quote
+                .map(|q| {
+                    if q.prev_close > 0.0 {
+                        q.price / q.prev_close - 1.0
+                    } else {
+                        0.0
+                    }
+                })
+                .unwrap_or(0.0),
+            regime,
+            candidates,
+            accepted,
+            paused: cfg.paused,
+            signal_side,
+            signal_t,
+            signal_target,
+        });
+    }
+
+    Ok(out)
+}
