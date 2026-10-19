@@ -182,10 +182,53 @@ async function remove(): Promise<void> {
         <span>计划内 {{ store.journalStats.planned }}</span>
         <span>执行率 {{ (store.journalStats.adherence * 100).toFixed(0) }}%</span>
       </div>
-      <div v-if="store.journalStats.mistakes.length" class="tags">
-        <span v-for="m in store.journalStats.mistakes" :key="m.name" class="stat">
-          {{ m.name }} ×{{ m.count }}
-        </span>
+
+      <div class="attr">
+        <div class="attr-row head">
+          <span>盈亏归因</span>
+          <span>笔数</span>
+          <span>净盈亏</span>
+          <span>均值</span>
+          <span>胜率</span>
+        </div>
+        <div class="attr-row">
+          <span>计划内</span>
+          <span>{{ store.journalStats.plannedPnl.trades }}</span>
+          <span :class="store.journalStats.plannedPnl.net >= 0 ? 'pos' : 'neg'">
+            {{ money(store.journalStats.plannedPnl.net) }}
+          </span>
+          <span :class="store.journalStats.plannedPnl.avg >= 0 ? 'pos' : 'neg'">
+            {{ money(store.journalStats.plannedPnl.avg) }}
+          </span>
+          <span>{{ (store.journalStats.plannedPnl.winRate * 100).toFixed(0) }}%</span>
+        </div>
+        <div class="attr-row">
+          <span>计划外</span>
+          <span>{{ store.journalStats.unplannedPnl.trades }}</span>
+          <span :class="store.journalStats.unplannedPnl.net >= 0 ? 'pos' : 'neg'">
+            {{ money(store.journalStats.unplannedPnl.net) }}
+          </span>
+          <span :class="store.journalStats.unplannedPnl.avg >= 0 ? 'pos' : 'neg'">
+            {{ money(store.journalStats.unplannedPnl.avg) }}
+          </span>
+          <span>{{ (store.journalStats.unplannedPnl.winRate * 100).toFixed(0) }}%</span>
+        </div>
+      </div>
+
+      <div class="delta">
+        计划内均值 − 计划外均值 =
+        <b :class="store.journalStats.pnlDeltaAvg >= 0 ? 'pos' : 'neg'">
+          {{ money(store.journalStats.pnlDeltaAvg) }}
+        </b>
+      </div>
+
+      <div v-if="store.journalStats.mistakePnl.length" class="mis">
+        <div class="lbl">错误标签盈亏</div>
+        <div v-for="m in store.journalStats.mistakePnl" :key="m.name" class="mis-row">
+          <span>{{ m.name }} ×{{ m.count }}</span>
+          <span :class="m.net >= 0 ? 'pos' : 'neg'">{{ money(m.net) }}</span>
+          <span class="avg">{{ money(m.avg) }}/笔</span>
+        </div>
       </div>
     </div>
   </div>
@@ -336,6 +379,46 @@ textarea {
   border-top: 1px solid #1d2431;
   margin-top: 10px;
   padding-top: 8px;
+}
+.attr {
+  margin-top: 6px;
+  border: 1px solid #1d2431;
+  border-radius: 3px;
+  overflow: hidden;
+}
+.attr-row {
+  display: grid;
+  grid-template-columns: 1.3fr 0.7fr 1fr 1fr 0.7fr;
+  gap: 4px;
+  padding: 3px 6px;
+  font: 9px Consolas, monospace;
+  color: #9aa7bb;
+}
+.attr-row.head {
+  background: #0b1017;
+  color: #5f6d84;
+}
+.attr-row + .attr-row {
+  border-top: 1px solid #151c27;
+}
+.delta {
+  margin-top: 5px;
+  font-size: 9px;
+  color: #76839a;
+}
+.mis {
+  margin-top: 6px;
+}
+.mis-row {
+  display: flex;
+  gap: 8px;
+  padding: 2px 0;
+  font: 9px Consolas, monospace;
+  color: #9aa7bb;
+}
+.mis-row .avg {
+  margin-left: auto;
+  color: #5f6d84;
 }
 .stat {
   color: #e8b339;

@@ -182,6 +182,21 @@ export interface JournalEntry {
   updatedAt: string;
 }
 
+export interface PnlBucket {
+  trades: number;
+  net: number;
+  avg: number;
+  wins: number;
+  winRate: number;
+}
+
+export interface MistakePnl {
+  name: string;
+  count: number;
+  net: number;
+  avg: number;
+}
+
 export interface JournalStats {
   entries: number;
   planned: number;
@@ -189,6 +204,10 @@ export interface JournalStats {
   adherence: number;
   mistakes: Array<{ name: string; count: number }>;
   emotions: Array<{ name: string; count: number }>;
+  plannedPnl: PnlBucket;
+  unplannedPnl: PnlBucket;
+  pnlDeltaAvg: number;
+  mistakePnl: MistakePnl[];
 }
 
 export type Config = StrategyConfig;

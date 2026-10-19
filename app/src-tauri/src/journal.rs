@@ -51,6 +51,25 @@ pub struct CountItem {
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct PnlBucket {
+    pub trades: i64,
+    pub net: f64,
+    pub avg: f64,
+    pub wins: i64,
+    pub win_rate: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MistakePnl {
+    pub name: String,
+    pub count: i64,
+    pub net: f64,
+    pub avg: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct JournalStats {
     pub entries: i64,
     pub planned: i64,
@@ -58,6 +77,10 @@ pub struct JournalStats {
     pub adherence: f64,
     pub mistakes: Vec<CountItem>,
     pub emotions: Vec<CountItem>,
+    pub planned_pnl: PnlBucket,
+    pub unplanned_pnl: PnlBucket,
+    pub pnl_delta_avg: f64,
+    pub mistake_pnl: Vec<MistakePnl>,
 }
 
 const SELECT: &str = "SELECT id, symbol, trade_day, open_fill_id, close_fill_id, planned, reason, emotion, mistakes_json, note, created_at, updated_at FROM trade_journal";
@@ -200,18 +223,94 @@ pub fn delete(conn: &Connection, id: i64) -> Result<(), String> {
     Ok(())
 }
 
+#[derive(Default)]
+struct BucketAcc {
+    trades: i64,
+    net: f64,
+    wins: i64,
+}
+
+impl BucketAcc {
+    fn add(&mut self, net: f64) {
+        self.trades += 1;
+        self.net += net;
+        if net > 0.0 {
+            self.wins += 1;
+        }
+    }
+
+    fn finish(self) -> PnlBucket {
+        PnlBucket {
+            trades: self.trades,
+            net: round2(self.net),
+            avg: if self.trades > 0 {
+                round2(self.net / self.trades as f64)
+            } else {
+                0.0
+            },
+            wins: self.wins,
+            win_rate: if self.trades > 0 {
+                self.wins as f64 / self.trades as f64
+            } else {
+                0.0
+            },
+        }
+    }
+}
+
+fn round2(v: f64) -> f64 {
+    (v * 100.0).round() / 100.0
+}
+
+fn pair_net(conn: &Connection, entry: &JournalEntry) -> Result<Option<f64>, String> {
+    let cents: Option<i64> = conn
+        .query_row(
+            "SELECT net_cents FROM t_pairs
+             WHERE symbol = ?1 AND trade_day = ?2 AND open_fill_id = ?3
+               AND IFNULL(close_fill_id, 0) = IFNULL(?4, 0)
+               AND status = 'CLOSED'
+             LIMIT 1",
+            params![
+                &entry.symbol,
+                &entry.day,
+                entry.open_fill_id,
+                entry.close_fill_id
+            ],
+            |row| row.get(0),
+        )
+        .ok()
+        .flatten();
+    Ok(cents.map(|c| c as f64 / 100.0))
+}
+
 pub fn stats(conn: &Connection, day: &str, symbol: &str) -> Result<JournalStats, String> {
     let entries = list(conn, day, symbol)?;
     let mut mistakes: HashMap<String, i64> = HashMap::new();
+    let mut mistake_pnl_map: HashMap<String, (i64, f64)> = HashMap::new();
     let mut emotions: HashMap<String, i64> = HashMap::new();
     let mut planned = 0i64;
+    let mut planned_acc = BucketAcc::default();
+    let mut unplanned_acc = BucketAcc::default();
 
     for entry in &entries {
         if entry.planned {
             planned += 1;
         }
+        let net = pair_net(conn, entry)?;
+        if let Some(n) = net {
+            if entry.planned {
+                planned_acc.add(n);
+            } else {
+                unplanned_acc.add(n);
+            }
+        }
         for m in &entry.mistakes {
             *mistakes.entry(m.clone()).or_default() += 1;
+            let slot = mistake_pnl_map.entry(m.clone()).or_insert((0, 0.0));
+            slot.0 += 1;
+            if let Some(n) = net {
+                slot.1 += n;
+            }
         }
         if let Some(e) = &entry.emotion {
             *emotions.entry(e.clone()).or_default() += 1;
@@ -224,6 +323,25 @@ pub fn stats(conn: &Connection, day: &str, symbol: &str) -> Result<JournalStats,
         .collect();
     mistake_items.sort_by(|a, b| b.count.cmp(&a.count).then(a.name.cmp(&b.name)));
 
+    let mut mistake_pnl: Vec<MistakePnl> = mistake_pnl_map
+        .into_iter()
+        .map(|(name, (count, net))| MistakePnl {
+            name,
+            count,
+            net: round2(net),
+            avg: if count > 0 {
+                round2(net / count as f64)
+            } else {
+                0.0
+            },
+        })
+        .collect();
+    mistake_pnl.sort_by(|a, b| {
+        a.net
+            .partial_cmp(&b.net)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
     let mut emotion_items: Vec<CountItem> = emotions
         .into_iter()
         .map(|(name, count)| CountItem { name, count })
@@ -231,6 +349,10 @@ pub fn stats(conn: &Connection, day: &str, symbol: &str) -> Result<JournalStats,
     emotion_items.sort_by(|a, b| b.count.cmp(&a.count).then(a.name.cmp(&b.name)));
 
     let total = entries.len() as i64;
+    let planned_pnl = planned_acc.finish();
+    let unplanned_pnl = unplanned_acc.finish();
+    let pnl_delta_avg = planned_pnl.avg - unplanned_pnl.avg;
+
     Ok(JournalStats {
         entries: total,
         planned,
@@ -242,6 +364,10 @@ pub fn stats(conn: &Connection, day: &str, symbol: &str) -> Result<JournalStats,
         },
         mistakes: mistake_items,
         emotions: emotion_items,
+        planned_pnl,
+        unplanned_pnl,
+        pnl_delta_avg,
+        mistake_pnl,
     })
 }
 
@@ -257,24 +383,38 @@ mod tests {
             "INSERT INTO fills (id, client_id, symbol, trade_day, ts, side, price_cents, qty, created_at)
                VALUES (1, 'c1', 'sh600519', '2026-10-19', '09:40', 'BUY', 10000, 100, 'x');
              INSERT INTO fills (id, client_id, symbol, trade_day, ts, side, price_cents, qty, created_at)
-               VALUES (2, 'c2', 'sh600519', '2026-10-19', '10:00', 'SELL', 10100, 100, 'x');",
+               VALUES (2, 'c2', 'sh600519', '2026-10-19', '10:00', 'SELL', 10100, 100, 'x');
+             INSERT INTO fills (id, client_id, symbol, trade_day, ts, side, price_cents, qty, created_at)
+               VALUES (3, 'c3', 'sh600519', '2026-10-19', '13:30', 'BUY', 10100, 100, 'x');
+             INSERT INTO fills (id, client_id, symbol, trade_day, ts, side, price_cents, qty, created_at)
+               VALUES (4, 'c4', 'sh600519', '2026-10-19', '14:00', 'SELL', 10070, 100, 'x');
+             INSERT INTO t_pairs (trade_day, symbol, side, open_fill_id, close_fill_id, qty,
+               gross_cents, cost_cents, net_cents, status, opened_at, closed_at)
+               VALUES ('2026-10-19', 'sh600519', '正T', 1, 2, 100, 5000, 700, 4300, 'CLOSED', '09:40', '10:00');
+             INSERT INTO t_pairs (trade_day, symbol, side, open_fill_id, close_fill_id, qty,
+               gross_cents, cost_cents, net_cents, status, opened_at, closed_at)
+               VALUES ('2026-10-19', 'sh600519', '正T', 3, 4, 100, -3000, 700, -3000, 'CLOSED', '13:30', '14:00');",
         )
         .expect("fills");
         c
     }
 
-    fn input(planned: bool) -> JournalInput {
+    fn input_for(open_fill_id: i64, close_fill_id: i64, planned: bool) -> JournalInput {
         JournalInput {
             symbol: "sh600519".to_string(),
             day: "2026-10-19".to_string(),
-            open_fill_id: 1,
-            close_fill_id: Some(2),
+            open_fill_id,
+            close_fill_id: Some(close_fill_id),
             planned,
             reason: Some("VWAP 回归".to_string()),
             emotion: Some("冷静".to_string()),
             mistakes: vec!["追高".to_string()],
             note: None,
         }
+    }
+
+    fn input(planned: bool) -> JournalInput {
+        input_for(1, 2, planned)
     }
 
     #[test]
@@ -297,6 +437,23 @@ mod tests {
         assert_eq!(s.adherence, 1.0);
         assert_eq!(s.mistakes[0].name, "追高");
         assert_eq!(s.emotions[0].name, "冷静");
+        assert_eq!(s.planned_pnl.net, 43.0);
+        assert_eq!(s.planned_pnl.trades, 1);
+    }
+
+    #[test]
+    fn attribution_splits_planned_and_unplanned_pnl() {
+        let c = conn();
+        upsert(&c, &input_for(1, 2, true)).expect("planned");
+        upsert(&c, &input_for(3, 4, false)).expect("unplanned");
+        let s = stats(&c, "2026-10-19", "sh600519").expect("stats");
+        assert_eq!(s.planned_pnl.trades, 1);
+        assert_eq!(s.planned_pnl.net, 43.0);
+        assert_eq!(s.unplanned_pnl.trades, 1);
+        assert_eq!(s.unplanned_pnl.net, -30.0);
+        assert!((s.pnl_delta_avg - 73.0).abs() < 1e-9);
+        assert_eq!(s.mistake_pnl[0].count, 2);
+        assert_eq!(s.mistake_pnl[0].net, 13.0);
     }
 
     #[test]
