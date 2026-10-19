@@ -14,6 +14,10 @@ pub struct JournalInput {
     pub open_fill_id: i64,
     #[serde(default)]
     pub close_fill_id: Option<i64>,
+    #[serde(default)]
+    pub plan_target: Option<f64>,
+    #[serde(default)]
+    pub plan_stop: Option<f64>,
     pub planned: bool,
     #[serde(default)]
     pub reason: Option<String>,
@@ -33,6 +37,8 @@ pub struct JournalEntry {
     pub day: String,
     pub open_fill_id: i64,
     pub close_fill_id: Option<i64>,
+    pub plan_target: Option<f64>,
+    pub plan_stop: Option<f64>,
     pub planned: bool,
     pub reason: Option<String>,
     pub emotion: Option<String>,
@@ -81,25 +87,41 @@ pub struct JournalStats {
     pub unplanned_pnl: PnlBucket,
     pub pnl_delta_avg: f64,
     pub mistake_pnl: Vec<MistakePnl>,
+    pub plan_target_net: f64,
+    pub plan_stop_net: f64,
+    pub actual_vs_target: f64,
+    pub plan_trades: i64,
 }
 
-const SELECT: &str = "SELECT id, symbol, trade_day, open_fill_id, close_fill_id, planned, reason, emotion, mistakes_json, note, created_at, updated_at FROM trade_journal";
+const SELECT: &str = "SELECT id, symbol, trade_day, open_fill_id, close_fill_id, plan_target_cents, plan_stop_cents, planned, reason, emotion, mistakes_json, note, created_at, updated_at FROM trade_journal";
+
+fn cents_to_price(value: Option<i64>) -> Option<f64> {
+    value.map(|c| c as f64 / 100.0)
+}
+
+fn price_to_cents(value: Option<f64>) -> Option<i64> {
+    value
+        .filter(|v| *v > 0.0)
+        .map(|v| (v * 100.0).round() as i64)
+}
 
 fn map_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<JournalEntry> {
-    let mistakes_json: String = row.get(8)?;
+    let mistakes_json: String = row.get(10)?;
     Ok(JournalEntry {
         id: row.get(0)?,
         symbol: row.get(1)?,
         day: row.get(2)?,
         open_fill_id: row.get(3)?,
         close_fill_id: row.get(4)?,
-        planned: row.get::<_, i64>(5)? != 0,
-        reason: row.get(6)?,
-        emotion: row.get(7)?,
+        plan_target: cents_to_price(row.get(5)?),
+        plan_stop: cents_to_price(row.get(6)?),
+        planned: row.get::<_, i64>(7)? != 0,
+        reason: row.get(8)?,
+        emotion: row.get(9)?,
         mistakes: serde_json::from_str(&mistakes_json).unwrap_or_default(),
-        note: row.get(9)?,
-        created_at: row.get(10)?,
-        updated_at: row.get(11)?,
+        note: row.get(11)?,
+        created_at: row.get(12)?,
+        updated_at: row.get(13)?,
     })
 }
 
@@ -127,6 +149,14 @@ pub fn upsert(conn: &Connection, input: &JournalInput) -> Result<JournalEntry, S
     if input.mistakes.iter().any(|m| m.chars().count() > 20) {
         return Err("单个错误标签最多 20 字".to_string());
     }
+    for v in [input.plan_target, input.plan_stop].into_iter().flatten() {
+        if !(0.01..=100_000.0).contains(&v) {
+            return Err("计划目标价/止损价格式不正确".to_string());
+        }
+    }
+
+    let plan_target_cents = price_to_cents(input.plan_target);
+    let plan_stop_cents = price_to_cents(input.plan_stop);
 
     let mistakes: Vec<String> = input
         .mistakes
@@ -157,10 +187,13 @@ pub fn upsert(conn: &Connection, input: &JournalInput) -> Result<JournalEntry, S
 
     if let Some(id) = existing {
         conn.execute(
-            "UPDATE trade_journal SET planned = ?1, reason = ?2, emotion = ?3,
-             mistakes_json = ?4, note = ?5, updated_at = ?6 WHERE id = ?7",
+            "UPDATE trade_journal SET planned = ?1, plan_target_cents = ?2,
+             plan_stop_cents = ?3, reason = ?4, emotion = ?5,
+             mistakes_json = ?6, note = ?7, updated_at = ?8 WHERE id = ?9",
             params![
                 if input.planned { 1 } else { 0 },
+                plan_target_cents,
+                plan_stop_cents,
                 reason,
                 emotion,
                 mistakes_json,
@@ -175,14 +208,16 @@ pub fn upsert(conn: &Connection, input: &JournalInput) -> Result<JournalEntry, S
 
     conn.execute(
         "INSERT INTO trade_journal
-         (symbol, trade_day, open_fill_id, close_fill_id, planned, reason, emotion,
-          mistakes_json, note, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10)",
+         (symbol, trade_day, open_fill_id, close_fill_id, plan_target_cents, plan_stop_cents,
+          planned, reason, emotion, mistakes_json, note, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12)",
         params![
             &input.symbol,
             &input.day,
             input.open_fill_id,
             input.close_fill_id,
+            plan_target_cents,
+            plan_stop_cents,
             if input.planned { 1 } else { 0 },
             reason,
             emotion,
@@ -262,13 +297,21 @@ fn round2(v: f64) -> f64 {
     (v * 100.0).round() / 100.0
 }
 
-fn pair_net(conn: &Connection, entry: &JournalEntry) -> Result<Option<f64>, String> {
-    let cents: Option<i64> = conn
+struct PairInfo {
+    side: String,
+    qty: i64,
+    open_price: f64,
+    net: f64,
+}
+
+fn pair_info(conn: &Connection, entry: &JournalEntry) -> Result<Option<PairInfo>, String> {
+    Ok(conn
         .query_row(
-            "SELECT net_cents FROM t_pairs
-             WHERE symbol = ?1 AND trade_day = ?2 AND open_fill_id = ?3
-               AND IFNULL(close_fill_id, 0) = IFNULL(?4, 0)
-               AND status = 'CLOSED'
+            "SELECT p.side, p.qty, p.net_cents, f.price_cents
+             FROM t_pairs p JOIN fills f ON f.id = p.open_fill_id
+             WHERE p.symbol = ?1 AND p.trade_day = ?2 AND p.open_fill_id = ?3
+               AND IFNULL(p.close_fill_id, 0) = IFNULL(?4, 0)
+               AND p.status = 'CLOSED'
              LIMIT 1",
             params![
                 &entry.symbol,
@@ -276,11 +319,24 @@ fn pair_net(conn: &Connection, entry: &JournalEntry) -> Result<Option<f64>, Stri
                 entry.open_fill_id,
                 entry.close_fill_id
             ],
-            |row| row.get(0),
+            |row| {
+                Ok(PairInfo {
+                    side: row.get(0)?,
+                    qty: row.get(1)?,
+                    net: row.get::<_, i64>(2)? as f64 / 100.0,
+                    open_price: row.get::<_, i64>(3)? as f64 / 100.0,
+                })
+            },
         )
-        .ok()
-        .flatten();
-    Ok(cents.map(|c| c as f64 / 100.0))
+        .ok())
+}
+
+fn leg_pnl(side: &str, open: f64, exit: f64, qty: i64) -> f64 {
+    if side == "正T" {
+        (exit - open) * qty as f64
+    } else {
+        (open - exit) * qty as f64
+    }
 }
 
 pub fn stats(conn: &Connection, day: &str, symbol: &str) -> Result<JournalStats, String> {
@@ -291,17 +347,35 @@ pub fn stats(conn: &Connection, day: &str, symbol: &str) -> Result<JournalStats,
     let mut planned = 0i64;
     let mut planned_acc = BucketAcc::default();
     let mut unplanned_acc = BucketAcc::default();
+    let mut plan_target_net = 0.0;
+    let mut plan_stop_net = 0.0;
+    let mut actual_vs_target = 0.0;
+    let mut plan_trades = 0i64;
 
     for entry in &entries {
         if entry.planned {
             planned += 1;
         }
-        let net = pair_net(conn, entry)?;
+        let info = pair_info(conn, entry)?;
+        let net = info.as_ref().map(|i| i.net);
         if let Some(n) = net {
             if entry.planned {
                 planned_acc.add(n);
             } else {
                 unplanned_acc.add(n);
+            }
+        }
+        if let Some(i) = info.as_ref() {
+            if entry.plan_target.is_some() || entry.plan_stop.is_some() {
+                plan_trades += 1;
+            }
+            if let Some(target) = entry.plan_target {
+                let target_pnl = leg_pnl(&i.side, i.open_price, target, i.qty);
+                plan_target_net += target_pnl;
+                actual_vs_target += i.net - target_pnl;
+            }
+            if let Some(stop) = entry.plan_stop {
+                plan_stop_net += leg_pnl(&i.side, i.open_price, stop, i.qty);
             }
         }
         for m in &entry.mistakes {
@@ -368,6 +442,10 @@ pub fn stats(conn: &Connection, day: &str, symbol: &str) -> Result<JournalStats,
         unplanned_pnl,
         pnl_delta_avg,
         mistake_pnl,
+        plan_target_net: round2(plan_target_net),
+        plan_stop_net: round2(plan_stop_net),
+        actual_vs_target: round2(actual_vs_target),
+        plan_trades,
     })
 }
 
@@ -405,6 +483,8 @@ mod tests {
             day: "2026-10-19".to_string(),
             open_fill_id,
             close_fill_id: Some(close_fill_id),
+            plan_target: Some(102.0),
+            plan_stop: Some(99.0),
             planned,
             reason: Some("VWAP 回归".to_string()),
             emotion: Some("冷静".to_string()),
@@ -439,6 +519,10 @@ mod tests {
         assert_eq!(s.emotions[0].name, "冷静");
         assert_eq!(s.planned_pnl.net, 43.0);
         assert_eq!(s.planned_pnl.trades, 1);
+        assert_eq!(s.plan_target_net, 200.0);
+        assert_eq!(s.plan_stop_net, -100.0);
+        assert_eq!(s.actual_vs_target, -157.0);
+        assert_eq!(s.plan_trades, 1);
     }
 
     #[test]
@@ -454,6 +538,10 @@ mod tests {
         assert!((s.pnl_delta_avg - 73.0).abs() < 1e-9);
         assert_eq!(s.mistake_pnl[0].count, 2);
         assert_eq!(s.mistake_pnl[0].net, 13.0);
+        assert_eq!(s.plan_target_net, 300.0);
+        assert_eq!(s.plan_stop_net, -300.0);
+        assert_eq!(s.actual_vs_target, -287.0);
+        assert_eq!(s.plan_trades, 2);
     }
 
     #[test]

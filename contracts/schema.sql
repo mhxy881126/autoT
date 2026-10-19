@@ -83,6 +83,8 @@ CREATE TABLE IF NOT EXISTS trade_journal (
   trade_day      TEXT    NOT NULL,
   open_fill_id   INTEGER NOT NULL REFERENCES fills(id),
   close_fill_id  INTEGER          REFERENCES fills(id),
+  plan_target_cents INTEGER,
+  plan_stop_cents   INTEGER,
   planned        INTEGER NOT NULL DEFAULT 1,
   reason         TEXT,
   emotion        TEXT,

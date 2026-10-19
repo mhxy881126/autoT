@@ -160,6 +160,8 @@ export interface JournalInput {
   day: string;
   openFillId: number;
   closeFillId?: number | null;
+  planTarget?: number | null;
+  planStop?: number | null;
   planned: boolean;
   reason?: string;
   emotion?: string;
@@ -173,6 +175,8 @@ export interface JournalEntry {
   day: string;
   openFillId: number;
   closeFillId: number | null;
+  planTarget: number | null;
+  planStop: number | null;
   planned: boolean;
   reason: string | null;
   emotion: string | null;
@@ -208,6 +212,10 @@ export interface JournalStats {
   unplannedPnl: PnlBucket;
   pnlDeltaAvg: number;
   mistakePnl: MistakePnl[];
+  planTargetNet: number;
+  planStopNet: number;
+  actualVsTarget: number;
+  planTrades: number;
 }
 
 export type Config = StrategyConfig;

@@ -16,6 +16,8 @@ const msg = ref("");
 
 const form = reactive({
   planned: true,
+  planTarget: 0,
+  planStop: 0,
   reason: "",
   emotion: "冷静",
   mistakes: [] as string[],
@@ -24,6 +26,24 @@ const form = reactive({
 
 const EMOTIONS = ["冷静", "犹豫", "追涨", "恐慌", "报复", "其他"];
 const MISTAKES = ["追高", "抄底过早", "未按信号", "超仓", "未止损", "情绪化", "计划外"];
+
+function round2(v: number): number {
+  return Math.round(v * 100) / 100;
+}
+
+function openPriceFor(p: TPair): number {
+  return store.ledger?.fills.find((f) => f.id === p.openFillId)?.price ?? 0;
+}
+
+function defaultTarget(p: TPair, open: number): number {
+  const pct = store.config?.targetLo ?? 0.0045;
+  return open > 0 ? round2(open * (p.side === "正T" ? 1 + pct : 1 - pct)) : 0;
+}
+
+function defaultStop(p: TPair, open: number): number {
+  const pct = store.config?.stopPct ?? 0.0035;
+  return open > 0 ? round2(open * (p.side === "正T" ? 1 - pct : 1 + pct)) : 0;
+}
 
 function samePair(a: JournalEntry, p: TPair): boolean {
   return a.openFillId === p.openFillId && (a.closeFillId ?? 0) === (p.closeFillId ?? 0);
@@ -36,8 +56,11 @@ function entryFor(p: TPair): JournalEntry | undefined {
 function selectPair(p: TPair): void {
   selectedId.value = p.id;
   const e = entryFor(p);
+  const open = openPriceFor(p);
   existing.value = e ?? null;
   form.planned = e?.planned ?? true;
+  form.planTarget = e?.planTarget ?? defaultTarget(p, open);
+  form.planStop = e?.planStop ?? defaultStop(p, open);
   form.reason = e?.reason ?? "";
   form.emotion = e?.emotion ?? "冷静";
   form.mistakes = [...(e?.mistakes ?? [])];
@@ -46,6 +69,21 @@ function selectPair(p: TPair): void {
 }
 
 const selectedPair = computed(() => pairs.value.find((p) => p.id === selectedId.value) ?? null);
+
+const preview = computed(() => {
+  const p = selectedPair.value;
+  if (!p) return null;
+  const open = openPriceFor(p);
+  if (open <= 0) return null;
+  const dir = p.side === "正T" ? 1 : -1;
+  const targetPnl =
+    form.planTarget > 0 ? (form.planTarget - open) * dir * p.qty : null;
+  const stopPnl = form.planStop > 0 ? (form.planStop - open) * dir * p.qty : null;
+  const actual = p.net;
+  const delta =
+    actual != null && targetPnl != null ? actual - targetPnl : null;
+  return { open, targetPnl, stopPnl, actual, delta };
+});
 
 async function load(): Promise<void> {
   if (!isTauri() || !symbol.value) return;
@@ -74,6 +112,8 @@ async function save(): Promise<void> {
       day: day.value,
       openFillId: p.openFillId,
       closeFillId: p.closeFillId,
+      planTarget: form.planTarget > 0 ? Number(form.planTarget) : null,
+      planStop: form.planStop > 0 ? Number(form.planStop) : null,
       planned: form.planned,
       reason: form.reason,
       emotion: form.emotion,
@@ -142,6 +182,23 @@ async function remove(): Promise<void> {
           <input v-model="form.planned" type="checkbox" />
           计划内交易
         </label>
+
+        <div class="row2">
+          <label>目标价
+            <input v-model.number="form.planTarget" type="number" step="0.01" />
+          </label>
+          <label>止损价
+            <input v-model.number="form.planStop" type="number" step="0.01" />
+          </label>
+        </div>
+
+        <div v-if="preview" class="preview">
+          <span>开仓 {{ preview.open.toFixed(2) }}</span>
+          <span>目标 <b :class="(preview.targetPnl ?? 0) >= 0 ? 'pos' : 'neg'">{{ preview.targetPnl == null ? "—" : money(preview.targetPnl) }}</b></span>
+          <span>止损 <b :class="(preview.stopPnl ?? 0) >= 0 ? 'pos' : 'neg'">{{ preview.stopPnl == null ? "—" : money(preview.stopPnl) }}</b></span>
+          <span>实际 <b :class="(preview.actual ?? 0) >= 0 ? 'pos' : 'neg'">{{ preview.actual == null ? "未平" : money(preview.actual) }}</b></span>
+          <span>实际−目标 <b :class="(preview.delta ?? 0) >= 0 ? 'pos' : 'neg'">{{ preview.delta == null ? "—" : money(preview.delta) }}</b></span>
+        </div>
 
         <label>理由
           <input v-model="form.reason" placeholder="为什么做这笔 T" />
@@ -220,6 +277,18 @@ async function remove(): Promise<void> {
         <b :class="store.journalStats.pnlDeltaAvg >= 0 ? 'pos' : 'neg'">
           {{ money(store.journalStats.pnlDeltaAvg) }}
         </b>
+      </div>
+
+      <div v-if="store.journalStats.planTrades" class="plan-box">
+        <span>计划目标 {{ money(store.journalStats.planTargetNet) }}</span>
+        <span>计划止损 {{ money(store.journalStats.planStopNet) }}</span>
+        <span>
+          实际−目标
+          <b :class="store.journalStats.actualVsTarget >= 0 ? 'pos' : 'neg'">
+            {{ money(store.journalStats.actualVsTarget) }}
+          </b>
+        </span>
+        <span class="dim">{{ store.journalStats.planTrades }} 笔有目标</span>
       </div>
 
       <div v-if="store.journalStats.mistakePnl.length" class="mis">
@@ -405,6 +474,36 @@ textarea {
   margin-top: 5px;
   font-size: 9px;
   color: #76839a;
+}
+.plan-box {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 5px;
+  font: 9px Consolas, monospace;
+  color: #9aa7bb;
+}
+.plan-box .dim {
+  color: #5f6d84;
+}
+.row2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+.preview {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+  padding: 5px 6px;
+  background: #0b1017;
+  border: 1px solid #1d2431;
+  border-radius: 3px;
+  font: 9px Consolas, monospace;
+  color: #76839a;
+}
+.preview b {
+  font-weight: 500;
 }
 .mis {
   margin-top: 6px;

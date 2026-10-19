@@ -28,6 +28,8 @@ pub fn open(path: &Path) -> Result<Connection, String> {
     migrate_minutes_symbol(&conn);
     let _ =
         conn.execute_batch("ALTER TABLE minute_raw ADD COLUMN source TEXT NOT NULL DEFAULT 'real'");
+    let _ = conn.execute_batch("ALTER TABLE trade_journal ADD COLUMN plan_target_cents INTEGER");
+    let _ = conn.execute_batch("ALTER TABLE trade_journal ADD COLUMN plan_stop_cents INTEGER");
     Ok(conn)
 }
 
