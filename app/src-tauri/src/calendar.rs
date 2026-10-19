@@ -1,6 +1,7 @@
 //! A 股交易日历（静态快照）。
-//! 数据来源：exchange_calendars XSHG，覆盖 2025-01-01 ~ 2026-12-31。
-//! 覆盖范围外退化为“周一至周五开市”，并在健康提示里标注未覆盖。
+//! 数据来源：exchange_calendars XSHG（2025–2026）+ 2027 预排。
+//! 2027 年国务院/交易所安排尚未发布，2027 为按农历与近年放假规律预排，
+//! 健康状态会标注“2027 预排”，发布后需要替换。
 
 use chrono::{Datelike, Duration, NaiveDate, Weekday};
 
@@ -45,15 +46,43 @@ const HOLIDAYS: &[&str] = &[
     "2026-10-05",
     "2026-10-06",
     "2026-10-07",
+    // 2027 预排（官方安排未发布）
+    "2027-01-01",
+    "2027-02-05",
+    "2027-02-08",
+    "2027-02-09",
+    "2027-02-10",
+    "2027-02-11",
+    "2027-02-12",
+    "2027-04-05",
+    "2027-05-03",
+    "2027-05-04",
+    "2027-05-05",
+    "2027-06-09",
+    "2027-06-10",
+    "2027-06-11",
+    "2027-09-15",
+    "2027-09-16",
+    "2027-09-17",
+    "2027-10-01",
+    "2027-10-04",
+    "2027-10-05",
+    "2027-10-06",
+    "2027-10-07",
 ];
 
 pub const COVERAGE_START: &str = "2025-01-01";
-pub const COVERAGE_END: &str = "2026-12-31";
+pub const COVERAGE_END: &str = "2027-12-31";
 
 pub fn is_covered(day: NaiveDate) -> bool {
     let start = NaiveDate::parse_from_str(COVERAGE_START, "%Y-%m-%d").expect("start");
     let end = NaiveDate::parse_from_str(COVERAGE_END, "%Y-%m-%d").expect("end");
     day >= start && day <= end
+}
+
+/// 2027 为预排表，不是交易所正式公告。
+pub fn is_provisional(day: NaiveDate) -> bool {
+    day.year() == 2027 && is_covered(day)
 }
 
 pub fn is_trading_day(day: NaiveDate) -> bool {
@@ -114,5 +143,15 @@ mod tests {
     #[test]
     fn weekend_is_closed() {
         assert!(!is_trading_day(date("2026-10-17")));
+    }
+
+    #[test]
+    fn provisional_2027_is_covered_and_marked() {
+        assert!(is_covered(date("2027-06-01")));
+        assert!(is_provisional(date("2027-06-01")));
+        assert!(!is_provisional(date("2026-06-01")));
+        assert!(!is_trading_day(date("2027-02-08")));
+        assert!(!is_trading_day(date("2027-10-01")));
+        assert!(is_trading_day(date("2027-10-08")));
     }
 }

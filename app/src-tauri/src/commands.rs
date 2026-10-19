@@ -855,6 +855,7 @@ pub struct MarketHealth {
     pub healthy: bool,
     pub emergency: bool,
     pub calendar_covered: bool,
+    pub calendar_provisional: bool,
     pub source: String,
     pub message: String,
 }
@@ -893,6 +894,7 @@ pub fn health_for(state: &AppState) -> MarketHealth {
     let stale = phase == "交易" && (age_secs < 0 || age_secs > 90);
     let healthy = !emergency && !stale;
     let covered = calendar::is_covered(now.date_naive());
+    let provisional = calendar::is_provisional(now.date_naive());
     let mut message = if emergency {
         "全局急停".to_string()
     } else if stale {
@@ -908,6 +910,8 @@ pub fn health_for(state: &AppState) -> MarketHealth {
     };
     if !covered {
         message.push_str(" · 日历未覆盖");
+    } else if provisional {
+        message.push_str(" · 2027 预排");
     }
     MarketHealth {
         phase,
@@ -918,6 +922,7 @@ pub fn health_for(state: &AppState) -> MarketHealth {
         healthy,
         emergency,
         calendar_covered: covered,
+        calendar_provisional: provisional,
         source: state
             .feed
             .lock()
