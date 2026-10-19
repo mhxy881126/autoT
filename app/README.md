@@ -21,7 +21,9 @@ pnpm dev          # http://127.0.0.1:1425
 # 构建前端（vue-tsc + vite）
 pnpm build
 
-# 桌面模式（需要 MSVC Build Tools，见下）
+# 桌面模式（需要 MSVC Build Tools）
+# Windows 若提示找不到 link.exe，先在同一个终端执行：
+#   call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
 pnpm tauri dev
 ```
 
@@ -36,7 +38,7 @@ pnpm tauri dev
 | 工作台 UI | ✅ 已验证 | 分时 / 日K / 决策卡片 / 信号流水 / 门槛压测 / 账务回填，见 `shot.png`、`shot-test.png` |
 | Pinia 数据层 | ✅ 已验证 | 浏览器用 `src/data/demo.json`；Tauri 模式走 IPC 注入 |
 | IPC 桥 | ✅ 已验证（前端） | `src/lib/ipc.ts`，`__TAURI_INTERNALS__` 检测 + 事件订阅 |
-| Tauri 配置 | ⚠️ 未打包 | `tauri.conf.json` / capabilities / icons 已就位；`cargo check` 通过 |
+| Tauri 运行 | ✅ 本机验证 | 2026-10-19 19:37 启动，LIVE 行情；`desk.db` 落盘 242 根分时 + 9 条信号 |
 | Rust 行情骨架 | ✅ CI 通过 | Windows MSVC + macOS arm64 `cargo check` 通过 |
 | SQLite 账本 | ✅ CI 通过 | 幂等/冲突/配对/部分成交/未闭环/冲正重放 |
 | 回填幂等 | ✅ CI 通过 | `submit_fill` 双唯一键；前端回填表单已接通 |
@@ -49,8 +51,8 @@ pnpm tauri dev
 | CI 编译门 | ✅ 全绿 | [run 39245093718](https://github.com/mhxy881126/autoT/actions/runs/39245093718)（17 单测） |
 | 安装包 / macOS 产物 | ❌ 未产出 | 需 Windows MSVC 与 macOS + Xcode，见根目录技术方案 §7 |
 
-**验证边界**：生产构建与单测由 CI 在 Windows MSVC / macOS arm64 上执行；
-本机没有 MSVC 链接器，无法在本地起 Tauri 窗口，因此“能编译”不等于“运行时已验收”。
+**验证边界**：本机用 `vcvars64` 初始化 MSVC 后已实际启动窗口，看到 LIVE 行情与真实信号；
+CI 负责 Windows/macOS 双平台编译与单测。安装包、签名与公证仍未做。
 
 ## 本机为什么编不了 Rust
 
