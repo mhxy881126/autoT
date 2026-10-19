@@ -2,17 +2,33 @@
 //! 只阻止系统睡眠，不强制点亮屏幕。
 
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, OnceLock};
 
 static ON: AtomicBool = AtomicBool::new(false);
+static TX: OnceLock<mpsc::Sender<bool>> = OnceLock::new();
 
+/// 所有 enable/disable 都在同一根 OS 线程里执行。
+/// Windows 的 ES_CONTINUOUS 是线程级的；异步任务换线程会让“释放”落空。
 pub fn set(on: bool) {
-    if on {
-        if !ON.swap(true, Ordering::SeqCst) {
-            imp::enable();
-        }
-    } else if ON.swap(false, Ordering::SeqCst) {
-        imp::disable();
+    if ON.swap(on, Ordering::SeqCst) == on {
+        return;
     }
+    let tx = TX.get_or_init(|| {
+        let (tx, rx) = mpsc::channel::<bool>();
+        let _ = std::thread::Builder::new()
+            .name("awake-guard".to_string())
+            .spawn(move || {
+                for want in rx {
+                    if want {
+                        imp::enable();
+                    } else {
+                        imp::disable();
+                    }
+                }
+            });
+        tx
+    });
+    let _ = tx.send(on);
 }
 
 pub fn is_on() -> bool {

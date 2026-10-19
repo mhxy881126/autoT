@@ -143,6 +143,7 @@ app/
 
 - **防休眠**：交易时段在 Rust 里调用 Windows `SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED)`，
   只阻止系统睡眠、不强制亮屏；macOS 启 `caffeinate -i -w <pid>` 子进程。盘后自动释放。
+  这些调用由一根专用 OS 线程串行执行，避免异步任务换线程导致释放落空。
 - **单实例**：`tauri-plugin-single-instance`，第二个实例启动后立即退出并唤起已有窗口，避免双开重复轮询。
 - **启动完整性检查**：启动时查询所有 `status <> 'CLOSED'` 的 T 对，按日 + 标的聚合，在顶栏横幅提示；
   不自动修改账本，必须人工处理或冲正。
