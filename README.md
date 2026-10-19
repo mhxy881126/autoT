@@ -47,9 +47,10 @@ pnpm tauri dev      # 桌面模式，需要 MSVC / Xcode
 | D5 | 特征 + regime + tick 全字段 | 完成（CI 绿） |
 | D6 | 信号引擎 + 否决理由落库 | 完成（CI 绿） |
 | D7 | T 对配对、部分成交、未闭环、冲正 | 完成（CI 绿） |
-| D8–D10 | 交割单对账、防休眠、打包 | 待做 |
+| D8 | CSV 交割单导入、去重、手工单差异 | 完成（CI 绿） |
+| D9–D10 | 防休眠、崩溃恢复、打包 | 待做 |
 
-**验证**：前端 `vue-tsc + vite build` 通过；Rust 在 Windows MSVC 与 macOS arm64 双平台通过 `cargo test` + `cargo check`（含 Python–Rust 黄金样本对齐）。CI：[run 39243731385](https://github.com/mhxy881126/autoT/actions/runs/39243731385)。
+**验证**：前端 `vue-tsc + vite build` 通过；Rust 在 Windows MSVC 与 macOS arm64 双平台通过 `cargo test` + `cargo check`（17 个单测，含 Python–Rust 黄金样本）。CI：[run 39245093718](https://github.com/mhxy881126/autoT/actions/runs/39245093718)。
 
 ## 关键设计
 

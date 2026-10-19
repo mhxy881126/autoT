@@ -3,9 +3,9 @@
 Tauri 2（Rust）+ Vue 3 + TypeScript + Pinia + ECharts。
 一套代码面向 Windows x64 与 macOS（Apple Silicon / Intel 通用二进制）。
 
-> 当前是 **D1–D7 增量**：前端工作台完整可用；Rust 侧行情、SQLite 账本、分时缓存、regime、
-> 信号引擎、T 对配对与冲正均已接入，并在 Windows MSVC 与 macOS arm64 双平台通过 `cargo test` / `cargo check`。
-> 交割单导入与日终对账尚未接入（D8）。
+> 当前是 **D1–D8 增量**：前端工作台完整可用；Rust 侧行情、SQLite 账本、分时缓存、regime、
+> 信号引擎、T 对配对与冲正、CSV 交割单导入与对账均已接入，并在 Windows MSVC 与 macOS arm64 双平台通过 `cargo test` / `cargo check`。
+> 防休眠、崩溃恢复与安装包尚未接入（D9–D10）。
 
 ![工作台](./shot.png)
 
@@ -45,7 +45,8 @@ pnpm tauri dev
 | 信号落库 | ✅ CI 通过 | `signals` 表按 `(trade_day, id)` 去重，否决理由落库可复盘 |
 | 跨语言一致性 | ✅ CI 通过 | 真实 242 点数据，Rust 与 Python 信号逐条对齐 |
 | T 对配对 / 冲正 | ✅ CI 通过 | FIFO 配对、部分成交拆分、未闭环、void 重放 |
-| CI 编译门 | ✅ 全绿 | [run 39243731385](https://github.com/mhxy881126/autoT/actions/runs/39243731385)（全部单测） |
+| 交割单导入 | ✅ CI 通过 | CSV/TXT、GB18030 回退、表头识别、自然键去重、手工单差异提示 |
+| CI 编译门 | ✅ 全绿 | [run 39245093718](https://github.com/mhxy881126/autoT/actions/runs/39245093718)（17 单测） |
 | 安装包 / macOS 产物 | ❌ 未产出 | 需 Windows MSVC 与 macOS + Xcode，见根目录技术方案 §7 |
 
 **验证边界**：生产构建与单测由 CI 在 Windows MSVC / macOS arm64 上执行；
@@ -115,15 +116,16 @@ app/
 | D5 | 特征 + regime + `market:tick` 全字段 | ✅ CI 通过 |
 | D6 | 信号引擎 + 否决理由落库 | ✅ CI 通过 |
 | D7 | T 对配对 + 未闭环识别 + 冲正 | ✅ CI 通过 |
-| D8 | 交割单导入 + 对账 | 下一步 |
-| D9 | 防休眠 + 崩溃恢复 | 待做 |
+| D8 | 交割单导入 + 对账 | ✅ CI 通过 |
+| D9 | 防休眠 + 崩溃恢复 | 下一步 |
 | D10 | Windows 安装包 + macOS universal dmg | 待做 |
 
 ## 已知问题
 
 - **tick 的 regime 每 60 秒才刷新一次**：分时缓存按分钟重算，3 秒 tick 只更新价格与 z。
 - **冲正后要换新 clientId 重新录入**；冲正保留原记录并标记 `voided`，配对按当日全量重放。
-- **`position.available` 是近似值**：未闭环倒T时会偏保守；`unrealized` 暂为 0，D8 接行情后补。
+- **`position.available` 是近似值**：未闭环倒T时会偏保守；`unrealized` 暂为 0，接行情后补。
+- **交割单仅支持 CSV/TXT**：Excel 需先另存为 CSV；表头靠关键词识别，券商自定义模板可能要在 `statement.rs` 里补映射。
 - `src-tauri/icons/` 缺 `icon.icns`；macOS 打包前需在 macOS 上执行 `pnpm tauri icon icons/icon.png`。
 - Tauri 模式没有单实例插件，先开两个窗口会重复轮询（P3 加 `tauri-plugin-single-instance`）。
 - 前端包 1.29MB（ECharts 占大头）；桌面端可接受，若做 Web 分发需要按需引入。
