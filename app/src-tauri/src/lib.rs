@@ -8,6 +8,7 @@ mod history;
 mod ledger;
 mod market;
 mod research;
+mod sample;
 mod session;
 mod state;
 mod statement;
@@ -49,6 +50,8 @@ pub fn run() {
             commands::backtest_research,
             commands::import_minutes_csv,
             commands::list_minute_days,
+            commands::generate_sample_data,
+            commands::clear_sample_data,
             commands::get_config,
             commands::update_config,
             commands::test_notification,

@@ -257,6 +257,18 @@ export interface HistoryImportResult {
   skipped: number;
 }
 
+export interface MinuteDay {
+  day: string;
+  source: string;
+}
+
+export interface SampleResult {
+  symbol: string;
+  days: number;
+  rows: number;
+  seed: number;
+}
+
 export interface ParamCell {
   zEntry: number;
   targetLo: number;
@@ -291,6 +303,7 @@ export interface ResearchReport {
   inSampleDays: string[];
   outSampleDays: string[];
   note: string;
+  demoDays: number;
   selection: SelectedParams | null;
   currentOutSample: Scorecard | null;
   bestOutSample: Scorecard | null;

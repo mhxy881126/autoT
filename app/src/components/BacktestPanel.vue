@@ -16,6 +16,8 @@ const importing = ref(false);
 const busyDay = ref(false);
 const busyRange = ref(false);
 const busyResearch = ref(false);
+const generating = ref(false);
+const genMsg = ref("");
 const importMsg = ref("");
 const err = ref("");
 
@@ -28,8 +30,10 @@ async function refreshDays(): Promise<void> {
   try {
     const days = await store.loadMinuteDays(symbol.value);
     if (days.length) {
-      if (!day.value) day.value = fmtDay(days[days.length - 1]);
-      if (!rangeText.value) rangeText.value = days.map(fmtDay).join("\n");
+      if (!day.value) day.value = fmtDay(days[days.length - 1].day);
+      if (!rangeText.value) {
+        rangeText.value = days.map((d) => fmtDay(d.day)).join("\n");
+      }
     }
   } catch (e) {
     err.value = e instanceof Error ? e.message : String(e);
@@ -130,6 +134,45 @@ async function runResearch(): Promise<void> {
   }
 }
 
+async function generateSample(): Promise<void> {
+  if (!symbol.value || generating.value) return;
+  generating.value = true;
+  err.value = "";
+  genMsg.value = "";
+  try {
+    const res = await store.generateSample(symbol.value);
+    genMsg.value = `已生成 ${res.days} 天 / ${res.rows} 根合成数据（seed ${res.seed}），仅用于演示`;
+    await refreshDays();
+    if (store.minuteDays.length) {
+      day.value = fmtDay(store.minuteDays[store.minuteDays.length - 1].day);
+      rangeText.value = store.minuteDays.map((d) => fmtDay(d.day)).join("\n");
+    }
+  } catch (e) {
+    err.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    generating.value = false;
+  }
+}
+
+async function clearSample(): Promise<void> {
+  if (!symbol.value || generating.value) return;
+  generating.value = true;
+  err.value = "";
+  try {
+    const n = await store.clearSample(symbol.value);
+    genMsg.value = `已清除 ${n} 根合成示例数据`;
+    single.value = null;
+    card.value = null;
+    research.value = null;
+    await refreshDays();
+    rangeText.value = store.minuteDays.map((d) => fmtDay(d.day)).join("\n");
+  } catch (e) {
+    err.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    generating.value = false;
+  }
+}
+
 const sensTargets = computed(() => {
   const set = new Set((research.value?.sensitivity ?? []).map((c) => c.targetLo));
   return [...set].sort((a, b) => a - b);
@@ -160,6 +203,16 @@ function pct(v: number): string {
 
     <div class="block">
       <div class="lbl">历史分钟 CSV</div>
+      <div class="row" style="margin-bottom: 6px">
+        <button class="btn" :disabled="generating" @click="generateSample">
+          {{ generating ? "处理中…" : "生成 10 天示例" }}
+        </button>
+        <button class="btn" :disabled="generating" @click="clearSample">清除示例</button>
+      </div>
+      <div class="note warn">
+        合成示例只用于演示回测/研究流程，不能作为策略结论；真实数据请导入 CSV。
+      </div>
+      <div v-if="genMsg" class="msg">{{ genMsg }}</div>
       <input
         class="file"
         type="file"
@@ -172,12 +225,14 @@ function pct(v: number): string {
       <div v-if="store.minuteDays.length" class="chips">
         <span class="muted">已缓存 {{ store.minuteDays.length }} 天</span>
         <button
-          v-for="d in store.minuteDays.slice(-6)"
-          :key="d"
+          v-for="d in store.minuteDays.slice(-10)"
+          :key="d.day"
           class="chip"
-          @click="day = fmtDay(d)"
+          :class="{ demo: d.source === 'demo' }"
+          @click="day = fmtDay(d.day)"
         >
-          {{ fmtDay(d) }}
+          {{ fmtDay(d.day) }}
+          <i v-if="d.source === 'demo'">示例</i>
         </button>
       </div>
     </div>
@@ -374,6 +429,19 @@ function pct(v: number): string {
   font-size: 10px;
   color: #c8b483;
   margin-top: 4px;
+}
+.warn {
+  color: #c8a24a;
+}
+.chip.demo {
+  border-color: rgba(232, 179, 57, 0.45);
+  color: #c8b483;
+}
+.chip i {
+  font-style: normal;
+  font-size: 8px;
+  color: #e8b339;
+  margin-left: 3px;
 }
 .chips {
   display: flex;

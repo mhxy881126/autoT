@@ -49,6 +49,7 @@ CREATE INDEX IF NOT EXISTS idx_fills_day ON fills (symbol, trade_day, ts);
 CREATE TABLE IF NOT EXISTS minute_raw (
   symbol        TEXT    NOT NULL,
   trade_day     TEXT    NOT NULL,
+  source        TEXT    NOT NULL DEFAULT 'real',  -- real / demo
   t             TEXT    NOT NULL,          -- "09:30"
   price_cents   INTEGER NOT NULL,
   cum_vol       INTEGER NOT NULL,          -- 手，累计

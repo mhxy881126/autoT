@@ -14,7 +14,7 @@ pub struct Quote {
     pub time: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct RawBar {
     pub t: String,
     pub price: f64,

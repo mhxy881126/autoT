@@ -13,7 +13,9 @@ import type {
   ImportResult,
   LedgerDay,
   MinuteBar,
+  MinuteDay,
   ResearchReport,
+  SampleResult,
   Scorecard,
   Snapshot,
   StrategyConfig,
@@ -176,13 +178,21 @@ export const useDeskStore = defineStore("desk", () => {
     await loadWatchlist();
   }
 
-  const minuteDays = ref<string[]>([]);
+  const minuteDays = ref<MinuteDay[]>([]);
 
-  async function loadMinuteDays(symbol: string): Promise<string[]> {
+  async function loadMinuteDays(symbol: string): Promise<MinuteDay[]> {
     if (!isTauri()) return [];
-    const days = await call<string[]>("list_minute_days", { symbol });
+    const days = await call<MinuteDay[]>("list_minute_days", { symbol });
     minuteDays.value = days;
     return days;
+  }
+
+  async function generateSample(symbol: string): Promise<SampleResult> {
+    return call<SampleResult>("generate_sample_data", { symbol, days: 10 });
+  }
+
+  async function clearSample(symbol: string): Promise<number> {
+    return call<number>("clear_sample_data", { symbol });
   }
 
   async function importMinutesCsv(
@@ -290,6 +300,8 @@ export const useDeskStore = defineStore("desk", () => {
     removeSymbol,
     minuteDays,
     loadMinuteDays,
+    generateSample,
+    clearSample,
     importMinutesCsv,
     backtestDay,
     backtestRange,

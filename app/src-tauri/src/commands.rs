@@ -17,6 +17,7 @@ use crate::history;
 use crate::ledger::{self, Fill, FillInput, LedgerDay};
 use crate::market::{self, DayBar, Quote};
 use crate::research;
+use crate::sample;
 use crate::session;
 use crate::state::{AppState, FeedStatus, ScanCacheEntry, ScanFail, SeriesCache};
 use crate::statement::{self, ImportResult};
@@ -367,23 +368,119 @@ pub fn import_minutes_csv(
     })
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MinuteDay {
+    pub day: String,
+    pub source: String,
+}
+
 #[tauri::command]
 pub fn list_minute_days(
     state: tauri::State<'_, AppState>,
     symbol: String,
-) -> Result<Vec<String>, String> {
+) -> Result<Vec<MinuteDay>, String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     let mut stmt = conn
-        .prepare("SELECT DISTINCT trade_day FROM minute_raw WHERE symbol = ?1 ORDER BY trade_day")
+        .prepare(
+            "SELECT trade_day, MAX(source) FROM minute_raw
+             WHERE symbol = ?1 GROUP BY trade_day ORDER BY trade_day",
+        )
         .map_err(|e| e.to_string())?;
     let rows = stmt
-        .query_map(params![symbol], |row| row.get::<_, String>(0))
+        .query_map(params![symbol], |row| {
+            Ok(MinuteDay {
+                day: row.get(0)?,
+                source: row.get(1)?,
+            })
+        })
         .map_err(|e| e.to_string())?;
     let mut out = Vec::new();
     for row in rows {
         out.push(row.map_err(|e| e.to_string())?);
     }
     Ok(out)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SampleResult {
+    pub symbol: String,
+    pub days: i64,
+    pub rows: i64,
+    pub seed: u64,
+}
+
+/// 生成确定性合成数据，只用于演示回测/研究流程。
+#[tauri::command]
+pub fn generate_sample_data(
+    state: tauri::State<'_, AppState>,
+    symbol: String,
+    days: Option<u32>,
+    seed: Option<u64>,
+) -> Result<SampleResult, String> {
+    let symbol = symbol.trim().to_lowercase();
+    if symbol.len() != 8 {
+        return Err("标的代码格式应为 sh600519 / sz000858".to_string());
+    }
+    let cfg = {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        config::load_for(&conn, &symbol)
+    };
+    let start_price = if cfg.base_cost > 1.0 {
+        cfg.base_cost
+    } else {
+        72.0
+    };
+    let count = days.unwrap_or(10).clamp(1, 60) as usize;
+    let seed = seed.unwrap_or(20261019);
+
+    // 合成数据绝不覆盖真实数据：从最早的真实交易日前一个工作日起往前生成。
+    let real_min: Option<String> = {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        conn.query_row(
+            "SELECT MIN(trade_day) FROM minute_raw WHERE symbol = ?1 AND source = 'real'",
+            params![&symbol],
+            |row| row.get::<_, String>(0),
+        )
+        .ok()
+    };
+    let end_day = match real_min {
+        Some(day) => {
+            use chrono::{Datelike, Duration as ChronoDuration, NaiveDate, Weekday};
+            let base = NaiveDate::parse_from_str(&day, "%Y%m%d")
+                .unwrap_or_else(|_| session::now_cn().date_naive());
+            let mut cursor = base - ChronoDuration::days(1);
+            while matches!(cursor.weekday(), Weekday::Sat | Weekday::Sun) {
+                cursor -= ChronoDuration::days(1);
+            }
+            cursor.format("%Y-%m-%d").to_string()
+        }
+        None => session::now_cn().format("%Y-%m-%d").to_string(),
+    };
+    let data = sample::generate(count, start_price, seed, &end_day)?;
+
+    let mut conn = state.db.lock().map_err(|e| e.to_string())?;
+    let mut rows = 0i64;
+    for (day, bars) in &data {
+        store::save_demo_minutes(&mut conn, &symbol, day, bars)?;
+        rows += bars.len() as i64;
+    }
+    Ok(SampleResult {
+        symbol,
+        days: data.len() as i64,
+        rows,
+        seed,
+    })
+}
+
+#[tauri::command]
+pub fn clear_sample_data(
+    state: tauri::State<'_, AppState>,
+    symbol: String,
+) -> Result<usize, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    store::clear_demo_minutes(&conn, &symbol)
 }
 
 /// 多日回测记分卡：按日期顺序读取缓存分钟，未缓存的日期会被跳过。
@@ -480,12 +577,19 @@ pub fn backtest_research(
     if day_bars.is_empty() {
         return Err(format!("{symbol} 在给定日期范围内没有缓存分钟数据"));
     }
-    Ok(research::research(
-        &symbol,
-        &day_bars,
-        &cfg,
-        &backtest::FeeModel::default(),
-    ))
+    let demo_days = {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        store::demo_day_count(&conn, &symbol, &days)?
+    };
+    let mut report = research::research(&symbol, &day_bars, &cfg, &backtest::FeeModel::default());
+    report.demo_days = demo_days;
+    if demo_days > 0 {
+        report.note = format!(
+            "含 {demo_days} 天合成示例数据，仅用于流程演示，不能作为策略结论。{}",
+            report.note
+        );
+    }
+    Ok(report)
 }
 
 #[tauri::command]
