@@ -77,9 +77,16 @@ pub fn run() {
                                     };
                                     if let Some(pc) = prev_close {
                                         let bars = features::build(&raw, pc);
+                                        let day_fmt = commands::fmt_day(&day);
+                                        let signals = strategy::scan(&bars, &day_fmt, 1000);
+                                        let stats = commands::stats_for(&signals);
+
                                         if let Ok(mut conn) = handle.state::<AppState>().db.lock() {
                                             let _ = store::save_minutes(&mut conn, &day, &raw);
+                                            let _ =
+                                                store::save_signals(&mut conn, &day_fmt, &signals);
                                         }
+
                                         if let Ok(mut cache) =
                                             handle.state::<AppState>().series.lock()
                                         {
@@ -89,6 +96,29 @@ pub fn run() {
                                                 bars,
                                             });
                                         }
+
+                                        let accepted =
+                                            signals.iter().filter(|s| s.accepted).count();
+                                        let conclusion = if accepted > 0 {
+                                            format!(
+                                                "{} 个候选，{} 个通过。",
+                                                signals.len(),
+                                                accepted
+                                            )
+                                        } else {
+                                            format!(
+                                                "{} 个候选全部否决：回归空间不足。",
+                                                signals.len()
+                                            )
+                                        };
+                                        let _ = handle.emit(
+                                            "signals:update",
+                                            serde_json::json!({
+                                                "signals": signals,
+                                                "stats": stats,
+                                                "conclusion": conclusion
+                                            }),
+                                        );
                                     }
                                 }
                             }

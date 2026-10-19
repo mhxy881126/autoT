@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { Snapshot } from "./types";
+import type { DeskStats, Signal, Snapshot } from "./types";
 
 /** Tauri 2 注入 __TAURI_INTERNALS__；浏览器里为 undefined，用于降级到 demo 数据。 */
 export const isTauri = (): boolean =>
@@ -19,4 +19,17 @@ export async function subscribeFeed(
   handler: (s: { connected: boolean; source: string; latencyMs: number }) => void
 ): Promise<UnlistenFn> {
   return listen("feed:status", (event) => handler(event.payload as never));
+}
+
+export interface SignalsUpdate {
+  signals: Signal[];
+  stats: DeskStats;
+  conclusion: string;
+}
+
+/** 每分钟分时刷新后，Rust 会重算信号并通过该事件推送。 */
+export async function subscribeSignals(
+  handler: (p: SignalsUpdate) => void
+): Promise<UnlistenFn> {
+  return listen<SignalsUpdate>("signals:update", (event) => handler(event.payload));
 }

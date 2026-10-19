@@ -61,7 +61,7 @@ pub fn ledger_day(state: tauri::State<'_, AppState>, day: String) -> Result<Ledg
     ledger::day(&conn, &day)
 }
 
-fn fmt_day(d: &str) -> String {
+pub(crate) fn fmt_day(d: &str) -> String {
     if d.len() == 8 {
         format!("{}-{}-{}", &d[..4], &d[4..6], &d[6..])
     } else {
@@ -97,7 +97,7 @@ fn build_kline(daily: &[DayBar]) -> Vec<serde_json::Value> {
         .collect()
 }
 
-fn stats_for(signals: &[Signal]) -> serde_json::Value {
+pub(crate) fn stats_for(signals: &[Signal]) -> serde_json::Value {
     let mut veto: std::collections::BTreeMap<String, i64> = std::collections::BTreeMap::new();
     for s in signals {
         for v in &s.veto {

@@ -2,7 +2,7 @@ import { defineStore } from "pinia";
 import { computed, ref } from "vue";
 import demoJson from "../data/demo.json";
 import type { DeskPayload, Fill, FillInput, MinuteBar, Snapshot } from "../lib/types";
-import { call, isTauri, subscribeTick } from "../lib/ipc";
+import { call, isTauri, subscribeSignals, subscribeTick } from "../lib/ipc";
 
 const demo = demoJson as unknown as DeskPayload;
 
@@ -40,6 +40,11 @@ export const useDeskStore = defineStore("desk", () => {
       mode.value = "live";
       await subscribeTick((s) => {
         live.value = s;
+      });
+      await subscribeSignals((p) => {
+        payload.value.signals = p.signals;
+        payload.value.stats = p.stats;
+        payload.value.meta.conclusion = p.conclusion;
       });
       await loadFills(boot.meta.date);
     } catch (e) {
