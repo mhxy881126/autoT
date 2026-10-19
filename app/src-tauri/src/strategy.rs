@@ -237,4 +237,48 @@ mod tests {
         let signals = scan(&bars, "2026-10-19", 1000);
         assert_eq!(signals.len(), 1);
     }
+
+    /// 跨语言黄金样本：同一份真实分钟数据，Rust 与 Python 原型必须给出同样的信号。
+    #[test]
+    fn matches_python_golden() {
+        let v: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/golden_minute.json")).expect("fixture");
+        let prev = v["prevClose"].as_f64().expect("prevClose");
+        let raw: Vec<crate::market::RawBar> = v["raw"]
+            .as_array()
+            .expect("raw")
+            .iter()
+            .map(|r| crate::market::RawBar {
+                t: r["t"].as_str().unwrap_or("").to_string(),
+                price: r["price"].as_f64().unwrap_or(0.0),
+                cum_vol: r["cumVol"].as_i64().unwrap_or(0),
+                cum_amt: r["cumAmt"].as_f64().unwrap_or(0.0),
+            })
+            .collect();
+
+        let bars = crate::features::build(&raw, prev);
+        let signals = scan(&bars, "2026-10-19", 1000);
+        let expected = v["expected"].as_array().expect("expected");
+
+        assert_eq!(
+            signals.len(),
+            expected.len(),
+            "signal count diverged from Python"
+        );
+        for (s, e) in signals.iter().zip(expected.iter()) {
+            assert_eq!(s.t, e["t"].as_str().unwrap_or(""), "time diverged");
+            assert_eq!(
+                s.side,
+                e["side"].as_str().unwrap_or(""),
+                "side diverged at {}",
+                s.t
+            );
+            assert_eq!(
+                s.accepted,
+                e["accepted"].as_bool().unwrap_or(false),
+                "accepted diverged at {}",
+                s.t
+            );
+        }
+    }
 }
