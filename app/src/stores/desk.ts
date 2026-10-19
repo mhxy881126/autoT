@@ -9,7 +9,8 @@ import type {
   LedgerDay,
   MinuteBar,
   Snapshot,
-  StrategyConfig
+  StrategyConfig,
+  WatchItem
 } from "../lib/types";
 import { call, isTauri, subscribeSignals, subscribeTick } from "../lib/ipc";
 
@@ -24,6 +25,7 @@ export const useDeskStore = defineStore("desk", () => {
   const fills = ref<Fill[]>([]);
   const ledger = ref<LedgerDay | null>(null);
   const config = ref<StrategyConfig | null>(null);
+  const watchlist = ref<WatchItem[]>([]);
 
   const minutes = computed<MinuteBar[]>(() => {
     const base = payload.value.minutes.slice();
@@ -60,6 +62,7 @@ export const useDeskStore = defineStore("desk", () => {
       });
       await loadFills(boot.meta.date);
       await loadLedger(boot.meta.date);
+      await loadWatchlist();
     } catch (e) {
       bootError.value = e instanceof Error ? e.message : String(e);
     }
@@ -88,7 +91,38 @@ export const useDeskStore = defineStore("desk", () => {
     const saved = await call<StrategyConfig>("update_config", { next });
     config.value = saved;
     await reload();
+    await loadWatchlist();
     return saved;
+  }
+
+  async function loadWatchlist(): Promise<void> {
+    if (!isTauri()) return;
+    try {
+      watchlist.value = await call<WatchItem[]>("list_watchlist");
+    } catch (e) {
+      bootError.value = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  async function switchSymbol(symbol: string): Promise<void> {
+    const cfg = await call<StrategyConfig>("set_symbol", { symbol });
+    config.value = cfg;
+    await reload();
+    await loadWatchlist();
+  }
+
+  async function addSymbol(symbol: string): Promise<void> {
+    const cfg = await call<StrategyConfig>("add_symbol", { symbol });
+    config.value = cfg;
+    await reload();
+    await loadWatchlist();
+  }
+
+  async function removeSymbol(symbol: string): Promise<void> {
+    await call<void>("remove_symbol", { symbol });
+    await loadConfig();
+    await reload();
+    await loadWatchlist();
   }
 
   async function loadFills(day: string): Promise<void> {    if (!isTauri()) return;
@@ -143,10 +177,15 @@ export const useDeskStore = defineStore("desk", () => {
     fills,
     ledger,
     config,
+    watchlist,
     load,
     loadConfig,
     reload,
     saveConfig,
+    loadWatchlist,
+    switchSymbol,
+    addSymbol,
+    removeSymbol,
     loadFills,
     loadLedger,
     submitFill,

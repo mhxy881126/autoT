@@ -6,6 +6,7 @@ import IntradayChart from "./components/IntradayChart.vue";
 import KLineChart from "./components/KLineChart.vue";
 import DecisionCard from "./components/DecisionCard.vue";
 import Panels from "./components/Panels.vue";
+import WatchList from "./components/WatchList.vue";
 import SettingsPanel from "./components/SettingsPanel.vue";
 import GuidePanel from "./components/GuidePanel.vue";
 
@@ -90,6 +91,7 @@ onMounted(() => {
     </section>
 
     <main class="main">
+      <WatchList />
       <div class="left">
         <section class="panel">
           <div class="panel-head">
@@ -169,5 +171,8 @@ onMounted(() => {
 .ghost:hover {
   color: #dbe2ee;
   border-color: #3a4354;
+}
+.main {
+  grid-template-columns: 190px minmax(0, 1fr) 420px;
 }
 </style>

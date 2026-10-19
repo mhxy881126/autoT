@@ -137,6 +137,15 @@ export interface StrategyConfig {
 
 export type Config = StrategyConfig;
 
+export interface WatchItem {
+  symbol: string;
+  name: string;
+  price: number;
+  changePct: number;
+  baseQty: number;
+  paused: boolean;
+}
+
 export interface FeedStatus {
   connected: boolean;
   source: "tencent" | "sina" | "none";

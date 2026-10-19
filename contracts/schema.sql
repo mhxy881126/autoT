@@ -13,6 +13,13 @@ CREATE TABLE IF NOT EXISTS meta (
   value TEXT NOT NULL
 );
 
+-- 每票独立参数：自选列表即这张表
+CREATE TABLE IF NOT EXISTS symbol_configs (
+  symbol      TEXT PRIMARY KEY,
+  config_json TEXT NOT NULL,
+  updated_at  TEXT NOT NULL
+);
+
 -- 成交：无券商回报，全部来自人工回填或交割单导入
 CREATE TABLE IF NOT EXISTS fills (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,

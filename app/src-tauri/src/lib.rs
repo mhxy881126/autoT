@@ -30,13 +30,17 @@ pub fn run() {
             commands::series,
             commands::import_statement,
             commands::get_config,
-            commands::update_config
+            commands::update_config,
+            commands::list_watchlist,
+            commands::add_symbol,
+            commands::set_symbol,
+            commands::remove_symbol
         ])
         .setup(|app| {
             let dir = app.path().app_data_dir().expect("app data dir");
             std::fs::create_dir_all(&dir).expect("create app data dir");
             let conn = store::open(&dir.join("desk.db")).expect("open ledger db");
-            let cfg = config::load(&conn);
+            let cfg = config::ensure_default(&conn).expect("load config");
 
             app.manage(AppState {
                 client: market::http_client(),

@@ -4,6 +4,7 @@ use serde::Serialize;
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Quote {
+    pub symbol: String,
     pub name: String,
     pub price: f64,
     pub prev_close: f64,
@@ -89,6 +90,7 @@ pub async fn fetch_quote(client: &reqwest::Client, symbol: &str) -> Result<Quote
     };
 
     Ok(Quote {
+        symbol: symbol.to_string(),
         name: f[1].to_string(),
         price: parse(f[3], "现价")?,
         prev_close: parse(f[4], "昨收")?,
@@ -230,4 +232,55 @@ pub fn clock(ts: &str) -> String {
     } else {
         "--:--".to_string()
     }
+}
+
+/// 批量快照：qt.gtimg.cn/q=sh600519,sz000858
+pub async fn fetch_quotes(
+    client: &reqwest::Client,
+    symbols: &[String],
+) -> Result<Vec<Quote>, String> {
+    if symbols.is_empty() {
+        return Ok(Vec::new());
+    }
+    let url = format!("https://qt.gtimg.cn/q={}", symbols.join(","));
+    let bytes = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| format!("批量行情请求失败: {e}"))?
+        .bytes()
+        .await
+        .map_err(|e| format!("批量行情读取失败: {e}"))?;
+
+    let (text, _, _) = GB18030.decode(&bytes);
+    let mut out = Vec::new();
+
+    for chunk in text.split(';') {
+        let line = chunk.trim();
+        if !line.starts_with("v_") {
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        let symbol = key.trim_start_matches("v_").trim();
+        let body = value.trim().trim_matches('"');
+        let f: Vec<&str> = body.split('~').collect();
+        if f.len() < 35 {
+            continue;
+        }
+        let num = |v: &str| v.parse::<f64>().unwrap_or(0.0);
+        out.push(Quote {
+            symbol: symbol.to_string(),
+            name: f[1].to_string(),
+            price: num(f[3]),
+            prev_close: num(f[4]),
+            open: num(f[5]),
+            high: num(f[33]),
+            low: num(f[34]),
+            time: f[30].to_string(),
+        });
+    }
+
+    Ok(out)
 }

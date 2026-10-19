@@ -41,25 +41,87 @@ impl Default for StrategyConfig {
     }
 }
 
-pub fn load(conn: &Connection) -> StrategyConfig {
-    conn.query_row("SELECT value FROM meta WHERE key = 'config'", [], |row| {
-        row.get::<_, String>(0)
-    })
+pub fn load_for(conn: &Connection, symbol: &str) -> StrategyConfig {
+    conn.query_row(
+        "SELECT config_json FROM symbol_configs WHERE symbol = ?1",
+        params![symbol],
+        |row| row.get::<_, String>(0),
+    )
     .optional()
     .ok()
     .flatten()
     .and_then(|text| serde_json::from_str::<StrategyConfig>(&text).ok())
-    .unwrap_or_default()
+    .map(|mut cfg| {
+        cfg.symbol = symbol.to_string();
+        cfg
+    })
+    .unwrap_or_else(|| {
+        let mut cfg = StrategyConfig::default();
+        cfg.symbol = symbol.to_string();
+        cfg
+    })
 }
 
 pub fn save(conn: &Connection, cfg: &StrategyConfig) -> Result<(), String> {
     let text = serde_json::to_string(cfg).map_err(|e| format!("序列化配置失败: {e}"))?;
     conn.execute(
-        "INSERT OR REPLACE INTO meta (key, value) VALUES ('config', ?1)",
-        params![text],
+        "INSERT INTO symbol_configs (symbol, config_json, updated_at)
+         VALUES (?1, ?2, ?3)
+         ON CONFLICT(symbol) DO UPDATE SET
+           config_json = excluded.config_json,
+           updated_at = excluded.updated_at",
+        params![
+            &cfg.symbol,
+            text,
+            chrono::Utc::now().to_rfc3339()
+        ],
     )
     .map_err(|e| format!("保存配置失败: {e}"))?;
     Ok(())
+}
+
+pub fn list(conn: &Connection) -> Result<Vec<String>, String> {
+    let mut stmt = conn
+        .prepare("SELECT symbol FROM symbol_configs ORDER BY updated_at DESC, symbol")
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row.map_err(|e| e.to_string())?);
+    }
+    Ok(out)
+}
+
+pub fn exists(conn: &Connection, symbol: &str) -> Result<bool, String> {
+    let count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM symbol_configs WHERE symbol = ?1",
+            params![symbol],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    Ok(count > 0)
+}
+
+/// 启动时取活跃配置：优先自选列表，其次迁移旧的 meta.config，最后默认。
+pub fn ensure_default(conn: &Connection) -> Result<StrategyConfig, String> {
+    let symbols = list(conn)?;
+    if let Some(first) = symbols.first() {
+        return Ok(load_for(conn, first));
+    }
+    let legacy = conn
+        .query_row("SELECT value FROM meta WHERE key = 'config'", [], |row| {
+            row.get::<_, String>(0)
+        })
+        .optional()
+        .ok()
+        .flatten()
+        .and_then(|text| serde_json::from_str::<StrategyConfig>(&text).ok())
+        .unwrap_or_default();
+    save(conn, &legacy)?;
+    Ok(legacy)
 }
 
 fn valid_hm(value: &str) -> bool {
@@ -122,4 +184,83 @@ pub fn validate(cfg: &StrategyConfig) -> Result<(), String> {
         return Err("开始时间必须早于结束时间".to_string());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn conn() -> Connection {
+        let c = Connection::open_in_memory().expect("memory db");
+        c.execute_batch(include_str!("../../../contracts/schema.sql"))
+            .expect("schema");
+        c
+    }
+
+    #[test]
+    fn per_symbol_configs_roundtrip() {
+        let c = conn();
+
+        let mut a = StrategyConfig::default();
+        a.symbol = "sh600519".to_string();
+        a.base_qty = 1000;
+        save(&c, &a).expect("save a");
+
+        let mut b = StrategyConfig::default();
+        b.symbol = "sz000858".to_string();
+        b.base_qty = 500;
+        b.z_entry = 1.5;
+        b.paused = true;
+        save(&c, &b).expect("save b");
+
+        let symbols = list(&c).expect("list");
+        assert_eq!(symbols.len(), 2);
+        assert!(symbols.contains(&"sh600519".to_string()));
+        assert!(symbols.contains(&"sz000858".to_string()));
+
+        let loaded = load_for(&c, "sz000858");
+        assert_eq!(loaded.base_qty, 500);
+        assert!((loaded.z_entry - 1.5).abs() < 1e-9);
+        assert!(loaded.paused);
+
+        // 覆盖保存不应新增行
+        b.base_qty = 800;
+        save(&c, &b).expect("resave b");
+        assert_eq!(list(&c).unwrap().len(), 2);
+        assert_eq!(load_for(&c, "sz000858").base_qty, 800);
+    }
+
+    #[test]
+    fn default_is_valid() {
+        validate(&StrategyConfig::default()).expect("default valid");
+    }
+
+    #[test]
+    fn rejects_bad_symbol_and_range() {
+        let mut c = StrategyConfig::default();
+        c.symbol = "600519".to_string();
+        assert!(validate(&c).is_err());
+
+        c.symbol = "sh600519".to_string();
+        c.max_t_ratio = 3.0;
+        assert!(validate(&c).is_err());
+    }
+
+    #[test]
+    fn ensure_default_migrates_legacy_meta() {
+        let c = conn();
+        let mut legacy = StrategyConfig::default();
+        legacy.symbol = "sh601318".to_string();
+        legacy.base_qty = 300;
+        c.execute(
+            "INSERT INTO meta (key, value) VALUES ('config', ?1)",
+            params![serde_json::to_string(&legacy).unwrap()],
+        )
+        .expect("legacy");
+
+        let cfg = ensure_default(&c).expect("ensure");
+        assert_eq!(cfg.symbol, "sh601318");
+        assert_eq!(cfg.base_qty, 300);
+        assert_eq!(list(&c).unwrap().len(), 1);
+    }
 }

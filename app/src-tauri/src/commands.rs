@@ -1,3 +1,6 @@
+use std::collections::HashMap;
+
+use rusqlite::params;
 use serde::Serialize;
 use serde_json::json;
 
@@ -318,4 +321,129 @@ pub fn update_config(
     *state.symbol.lock().map_err(|e| e.to_string())? = next.symbol.clone();
     *state.series.lock().map_err(|e| e.to_string())? = None;
     Ok(next)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WatchItem {
+    pub symbol: String,
+    pub name: String,
+    pub price: f64,
+    pub change_pct: f64,
+    pub base_qty: i64,
+    pub paused: bool,
+}
+
+fn activate(state: &AppState, symbol: &str) -> Result<StrategyConfig, String> {
+    let cfg = {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        if !config::exists(&conn, symbol)? {
+            return Err("该标的尚未加入自选".to_string());
+        }
+        config::load_for(&conn, symbol)
+    };
+    *state.config.lock().map_err(|e| e.to_string())? = cfg.clone();
+    *state.symbol.lock().map_err(|e| e.to_string())? = cfg.symbol.clone();
+    *state.series.lock().map_err(|e| e.to_string())? = None;
+    Ok(cfg)
+}
+
+#[tauri::command]
+pub fn set_symbol(
+    state: tauri::State<'_, AppState>,
+    symbol: String,
+) -> Result<StrategyConfig, String> {
+    activate(&state, symbol.trim())
+}
+
+#[tauri::command]
+pub fn add_symbol(
+    state: tauri::State<'_, AppState>,
+    symbol: String,
+) -> Result<StrategyConfig, String> {
+    let sym = symbol.trim().to_lowercase();
+    let mut probe = StrategyConfig::default();
+    probe.symbol = sym.clone();
+    config::validate(&probe)?;
+    {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        if !config::exists(&conn, &sym)? {
+            config::save(&conn, &probe)?;
+        }
+    }
+    activate(&state, &sym)
+}
+
+#[tauri::command]
+pub fn remove_symbol(state: tauri::State<'_, AppState>, symbol: String) -> Result<(), String> {
+    let active = state
+        .config
+        .lock()
+        .map_err(|e| e.to_string())?
+        .symbol
+        .clone();
+    let remaining = {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        let symbols = config::list(&conn)?;
+        if symbols.len() <= 1 {
+            return Err("至少保留一只自选".to_string());
+        }
+        conn.execute(
+            "DELETE FROM symbol_configs WHERE symbol = ?1",
+            params![symbol.trim()],
+        )
+        .map_err(|e| format!("删除自选失败: {e}"))?;
+        config::list(&conn)?
+    };
+    if active == symbol.trim() {
+        if let Some(next) = remaining.first() {
+            activate(&state, next)?;
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn list_watchlist(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<WatchItem>, String> {
+    let (symbols, meta) = {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        let symbols = config::list(&conn)?;
+        let mut meta = Vec::new();
+        for symbol in &symbols {
+            let cfg = config::load_for(&conn, symbol);
+            meta.push((symbol.clone(), cfg.base_qty, cfg.paused));
+        }
+        (symbols, meta)
+    };
+
+    let quotes = market::fetch_quotes(&state.client, &symbols)
+        .await
+        .unwrap_or_default();
+    let map: HashMap<String, market::Quote> =
+        quotes.into_iter().map(|q| (q.symbol.clone(), q)).collect();
+
+    Ok(meta
+        .into_iter()
+        .map(|(symbol, base_qty, paused)| {
+            let quote = map.get(&symbol);
+            WatchItem {
+                symbol,
+                name: quote.map(|q| q.name.clone()).unwrap_or_default(),
+                price: quote.map(|q| q.price).unwrap_or(0.0),
+                change_pct: quote
+                    .map(|q| {
+                        if q.prev_close > 0.0 {
+                            q.price / q.prev_close - 1.0
+                        } else {
+                            0.0
+                        }
+                    })
+                    .unwrap_or(0.0),
+                base_qty,
+                paused,
+            }
+        })
+        .collect())
 }
