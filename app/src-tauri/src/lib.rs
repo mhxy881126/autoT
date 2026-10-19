@@ -52,6 +52,9 @@ pub fn run() {
             commands::journal_stats,
             commands::risk_state,
             commands::refresh_signals,
+            commands::market_health,
+            commands::set_emergency_stop,
+            commands::precheck_order,
             commands::audit_report,
             commands::backtest_day,
             commands::backtest_range,
@@ -92,6 +95,7 @@ pub fn run() {
                 scan_cache: Mutex::new(std::collections::HashMap::new()),
                 scan_fail: Mutex::new(std::collections::HashMap::new()),
                 base_cost: Mutex::new(0.0),
+                emergency: std::sync::atomic::AtomicBool::new(false),
                 last_alert: Mutex::new(std::collections::HashMap::new()),
                 audit: Mutex::new(audit_issues),
             });
@@ -198,6 +202,15 @@ pub fn run() {
                                             base_cost,
                                             &mut signals,
                                         );
+                                        if app_state
+                                            .emergency
+                                            .load(std::sync::atomic::Ordering::SeqCst)
+                                        {
+                                            for signal in signals.iter_mut() {
+                                                signal.accepted = false;
+                                                signal.veto.push("全局急停：禁止开仓".to_string());
+                                            }
+                                        }
                                         let _ = handle.emit("risk:update", &risk_state);
                                         let stats = commands::stats_for(&signals);
 
@@ -212,10 +225,30 @@ pub fn run() {
                                             handle.state::<AppState>().series.lock()
                                         {
                                             *cache = Some(SeriesCache {
-                                                day,
+                                                day: day.clone(),
                                                 prev_close: pc,
                                                 bars,
                                             });
+                                        }
+
+                                        let health = commands::health_for(&app_state);
+                                        let _ = handle.emit("health:update", &health);
+                                        if let Ok(conn) = app_state.db.lock() {
+                                            if let Ok(mut day_ledger) = ledger::day(
+                                                &conn,
+                                                &day,
+                                                &symbol,
+                                                cfg.base_qty,
+                                                cfg.base_cost,
+                                            ) {
+                                                ledger::mark(
+                                                    &mut day_ledger,
+                                                    cfg.base_qty,
+                                                    base_cost,
+                                                    price,
+                                                );
+                                                let _ = handle.emit("ledger:update", &day_ledger);
+                                            }
                                         }
 
                                         let accepted =

@@ -25,6 +25,16 @@ const floatPnl = computed(() => (close.value - account.value.baseCost) * account
 const hotScans = computed(() => store.scan.filter((s) => s.accepted > 0 && !s.paused));
 const auditTotal = computed(() => store.audit.reduce((sum, a) => sum + a.count, 0));
 const showAudit = ref(true);
+const health = computed(() => payload.value.health);
+
+async function toggleHalt(): Promise<void> {
+  if (store.emergency) {
+    if (!window.confirm("恢复后允许新开仓与提醒，确认？")) return;
+    await store.setEmergencyStop(false);
+  } else {
+    await store.setEmergencyStop(true);
+  }
+}
 
 async function focusSymbol(symbol: string): Promise<void> {
   try {
@@ -68,7 +78,9 @@ onMounted(() => {
       <span class="pill" :class="store.mode === 'live' ? 'live' : 'reject'">
         {{ store.mode === "live" ? "LIVE" : "DEMO" }}
       </span>
-      <button class="halt" title="原型未接入交易通道">全局急停</button>
+      <button class="halt" :class="{ active: store.emergency }" @click="toggleHalt">
+        {{ store.emergency ? "急停中" : "全局急停" }}
+      </button>
     </header>
 
     <div v-if="showAudit && store.audit.length" class="audit-bar">
@@ -83,6 +95,16 @@ onMounted(() => {
       </span>
       <span v-if="store.audit.length > 3" class="audit-item">…</span>
       <button class="audit-close" @click="showAudit = false">知道了</button>
+    </div>
+
+    <div v-if="store.emergency || health?.stale" class="health-bar" :class="{ danger: store.emergency }">
+      <span class="health-label">数据</span>
+      <b>{{ health?.message ?? "健康状态未知" }}</b>
+      <span class="health-detail">
+        {{ health?.phase }} · 最后分钟 {{ health?.lastBar || "--:--" }} ·
+        {{ health?.source ?? "unknown" }}
+      </span>
+      <button v-if="store.emergency" class="health-resume" @click="toggleHalt">恢复</button>
     </div>
 
     <div v-if="payload.risk?.blocked" class="risk-bar">
@@ -132,12 +154,15 @@ onMounted(() => {
       </div>
       <div class="cell">
         <label>风控 / 状态</label>
-        <b class="ok">{{ store.mode === "live" ? "实时链路" : "回放模式" }}</b>
+        <b :class="health?.stale || store.emergency ? 'bad' : 'ok'">
+          {{ health?.message ?? (store.mode === "live" ? "实时链路" : "回放模式") }}
+        </b>
         <small>
           <span class="regime">
             <span class="dot" :style="{ background: REGIME_DOT[store.last.regime] ?? '#8c99ad' }"></span>
             {{ store.last.regime }}
           </span>
+          <span v-if="health" class="phase">{{ health.phase }}</span>
         </small>
       </div>
     </section>
@@ -327,5 +352,58 @@ onMounted(() => {
   font: 9px Consolas, monospace;
   color: #8f6f6d;
   white-space: nowrap;
+}
+.halt.active {
+  background: #ef5350;
+  color: #1a0707;
+  border-color: #ef5350;
+  cursor: pointer;
+}
+.health-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: rgba(232, 179, 57, 0.1);
+  border-bottom: 1px solid rgba(232, 179, 57, 0.35);
+  font-size: 11px;
+  color: #e8c987;
+}
+.health-bar.danger {
+  background: rgba(239, 83, 80, 0.14);
+  border-bottom-color: rgba(239, 83, 80, 0.5);
+  color: #ffb3b1;
+}
+.health-label {
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  color: #e8b339;
+}
+.health-bar.danger .health-label {
+  color: #ef5350;
+}
+.health-detail {
+  color: #8f7a52;
+  font: 9px Consolas, monospace;
+}
+.health-bar.danger .health-detail {
+  color: #b98a88;
+}
+.health-resume {
+  margin-left: auto;
+  background: none;
+  border: 1px solid rgba(255, 179, 177, 0.45);
+  color: #ffb3b1;
+  border-radius: 3px;
+  padding: 2px 8px;
+  font-size: 10px;
+  cursor: pointer;
+}
+.cell .bad {
+  color: #ef5350;
+}
+.cell .phase {
+  margin-left: 8px;
+  color: #6b7688;
 }
 </style>

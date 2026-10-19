@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use futures::stream::{self, StreamExt};
@@ -256,6 +257,13 @@ pub async fn bootstrap(state: tauri::State<'_, AppState>) -> Result<serde_json::
         base_cost,
         &mut signals,
     );
+    if state.emergency.load(Ordering::SeqCst) {
+        for signal in signals.iter_mut() {
+            signal.accepted = false;
+            signal.veto.push("全局急停：禁止开仓".to_string());
+        }
+    }
+    let health = health_for(&state);
     {
         let mut conn = state.db.lock().map_err(|e| e.to_string())?;
         let _ = store::save_signals(&mut conn, &day_fmt, &signals);
@@ -323,6 +331,7 @@ pub async fn bootstrap(state: tauri::State<'_, AppState>) -> Result<serde_json::
         "equity": [],
         "stats": stats,
         "risk": risk_state,
+        "health": health,
         "scenarios": [],
         "sensitivity": [],
         "last": last
@@ -811,6 +820,319 @@ pub fn refresh_signals(state: tauri::State<'_, AppState>) -> Result<serde_json::
         "conclusion": conclusion,
         "risk": risk_state
     }))
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MarketHealth {
+    pub phase: String,
+    pub trading_day: bool,
+    pub last_bar: String,
+    pub age_secs: i64,
+    pub stale: bool,
+    pub healthy: bool,
+    pub emergency: bool,
+    pub source: String,
+    pub message: String,
+}
+
+fn minute_of(t: &str) -> Option<i64> {
+    let mut it = t.split(':');
+    let h: i64 = it.next()?.parse().ok()?;
+    let m: i64 = it.next()?.parse().ok()?;
+    Some(h * 60 + m)
+}
+
+pub fn health_for(state: &AppState) -> MarketHealth {
+    use chrono::{Datelike, Timelike};
+    let now = session::now_cn();
+    let phase = session::phase(&now).to_string();
+    let (last_bar, age_secs) = {
+        let cache = state.series.lock().ok();
+        match cache.as_ref().and_then(|c| c.as_ref()) {
+            Some(c) => {
+                let bar = c.bars.last().map(|b| b.t.clone()).unwrap_or_default();
+                let today = now.format("%Y%m%d").to_string();
+                let age = if c.day == today {
+                    minute_of(&bar)
+                        .map(|m| ((now.hour() as i64 * 60 + now.minute() as i64) - m) * 60)
+                        .map(|v| v.max(0))
+                        .unwrap_or(-1)
+                } else {
+                    -1
+                };
+                (bar, age)
+            }
+            None => (String::new(), -1),
+        }
+    };
+    let emergency = state.emergency.load(Ordering::SeqCst);
+    let stale = phase == "交易" && (age_secs < 0 || age_secs > 90);
+    let healthy = !emergency && !stale;
+    let message = if emergency {
+        "全局急停".to_string()
+    } else if stale {
+        format!("行情断流 {age_secs}s")
+    } else {
+        match phase.as_str() {
+            "交易" => "行情正常".to_string(),
+            "午休" => "午休".to_string(),
+            "盘前" => "盘前".to_string(),
+            "收盘" => "收盘".to_string(),
+            _ => "休市".to_string(),
+        }
+    };
+    MarketHealth {
+        phase,
+        trading_day: session::is_trading_day(&now),
+        last_bar,
+        age_secs,
+        stale,
+        healthy,
+        emergency,
+        source: state
+            .feed
+            .lock()
+            .map(|f| f.source.clone())
+            .unwrap_or_else(|_| "unknown".to_string()),
+        message,
+    }
+}
+
+#[tauri::command]
+pub fn market_health(state: tauri::State<'_, AppState>) -> MarketHealth {
+    health_for(&state)
+}
+
+#[tauri::command]
+pub fn set_emergency_stop(state: tauri::State<'_, AppState>, active: bool) -> bool {
+    state.emergency.store(active, Ordering::SeqCst);
+    active
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrecheckInput {
+    pub symbol: String,
+    pub day: String,
+    pub side: String,
+    pub price: f64,
+    pub qty: i64,
+    #[serde(default)]
+    pub signal_id: Option<String>,
+    #[serde(default)]
+    pub signal_t: Option<String>,
+    #[serde(default)]
+    pub signal_price: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrecheckCheck {
+    pub name: String,
+    pub ok: bool,
+    pub detail: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrecheckResult {
+    pub ok: bool,
+    pub blockers: Vec<String>,
+    pub warnings: Vec<String>,
+    pub checks: Vec<PrecheckCheck>,
+}
+
+fn price_limit_ratio(symbol: &str) -> f64 {
+    if symbol.starts_with("sz30") || symbol.starts_with("sh688") {
+        0.2
+    } else if symbol.starts_with("bj") {
+        0.3
+    } else {
+        0.1
+    }
+}
+
+#[tauri::command]
+pub fn precheck_order(
+    state: tauri::State<'_, AppState>,
+    input: PrecheckInput,
+) -> Result<PrecheckResult, String> {
+    let cfg = {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        config::load_for(&conn, &input.symbol)
+    };
+    let (cache_day, bars, prev_close) = {
+        let cache = state.series.lock().map_err(|e| e.to_string())?;
+        match cache.as_ref() {
+            Some(c) => (c.day.clone(), c.bars.clone(), c.prev_close),
+            None => return Err("分时缓存为空，请先刷新行情".to_string()),
+        }
+    };
+    let day = if input.day.trim().is_empty() {
+        cache_day
+    } else {
+        day_key(&input.day)
+    };
+    let health = health_for(&state);
+    let base_cost = {
+        let stored = *state.base_cost.lock().map_err(|e| e.to_string())?;
+        if cfg.base_cost > 0.0 {
+            cfg.base_cost
+        } else if stored > 0.0 {
+            stored
+        } else {
+            input.price
+        }
+    };
+    let ledger_day = {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        ledger::day(&conn, &day, &input.symbol, cfg.base_qty, cfg.base_cost)?
+    };
+    let day_amount = {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        store::load_minutes(&conn, &input.symbol, &day)?
+            .last()
+            .map(|b| b.cum_amt)
+            .unwrap_or(0.0)
+    };
+    let risk = risk::evaluate(
+        &cfg,
+        &ledger_day,
+        cfg.cash + cfg.base_qty as f64 * base_cost,
+        day_amount,
+        input.price,
+        base_cost,
+    );
+
+    let mut checks = Vec::new();
+    let mut blockers = Vec::new();
+    let mut warnings = Vec::new();
+    let mut push = |name: &str, ok: bool, detail: String| {
+        if !ok {
+            blockers.push(format!("{name}：{detail}"));
+        }
+        checks.push(PrecheckCheck {
+            name: name.to_string(),
+            ok,
+            detail,
+        });
+    };
+
+    push(
+        "全局急停",
+        !health.emergency,
+        if health.emergency {
+            "已开启，禁止开仓".to_string()
+        } else {
+            "未开启".to_string()
+        },
+    );
+    push(
+        "交易时段",
+        health.phase == "交易",
+        format!("当前 {}", health.phase),
+    );
+    push(
+        "行情新鲜度",
+        !health.stale,
+        format!("最后分钟 {}，延迟 {}s", health.last_bar, health.age_secs),
+    );
+    push(
+        "价格合法",
+        input.price > 0.0,
+        format!("限价 {:.2}", input.price),
+    );
+    push(
+        "数量整手",
+        input.qty > 0 && input.qty % 100 == 0,
+        format!("{} 股", input.qty),
+    );
+
+    let side = input.side.to_uppercase();
+    let ratio = price_limit_ratio(&input.symbol);
+    let up = (prev_close * (1.0 + ratio) * 100.0).round() / 100.0;
+    let down = (prev_close * (1.0 - ratio) * 100.0).round() / 100.0;
+    let limit_ok = if side == "BUY" {
+        input.price < up - 0.001
+    } else {
+        input.price > down + 0.001
+    };
+    push(
+        if side == "BUY" {
+            "涨停限制"
+        } else {
+            "跌停限制"
+        },
+        limit_ok,
+        format!("昨收 {:.2}，涨停 {:.2}，跌停 {:.2}", prev_close, up, down),
+    );
+    push(
+        "停牌/无成交",
+        day_amount > 0.0,
+        format!("当日成交额 {:.0}", day_amount),
+    );
+
+    if side == "BUY" {
+        let need = input.price * input.qty as f64;
+        push(
+            "可用资金",
+            cfg.cash >= need,
+            format!("需要 {:.2}，可用 {:.2}", need, cfg.cash),
+        );
+    } else {
+        push(
+            "T+1 可用数量",
+            ledger_day.position.available >= input.qty,
+            format!("需要 {}，可用 {}", input.qty, ledger_day.position.available),
+        );
+    }
+
+    push(
+        "风控",
+        !risk.blocked,
+        if risk.blocked {
+            risk.reasons.join("；")
+        } else {
+            format!("日亏 {}，连亏 {}", risk.daily_pnl, risk.consecutive_losses)
+        },
+    );
+
+    if let Some(t) = input.signal_t.as_deref() {
+        let latest = bars.last().map(|b| b.t.as_str()).unwrap_or("");
+        let age = match (minute_of(t), minute_of(latest)) {
+            (Some(a), Some(b)) => b - a,
+            _ => 0,
+        };
+        push(
+            "信号时效",
+            age <= 3,
+            format!("信号 {}，最新 {}，约 {} 分钟", t, latest, age),
+        );
+    }
+
+    if let (Some(sp), Some(id)) = (input.signal_price, input.signal_id.as_deref()) {
+        if sp > 0.0 {
+            let dev = (input.price - sp).abs() / sp;
+            if dev > 0.005 {
+                blockers.push(format!("价格偏离信号价 {:.2}%（>0.5%）", dev * 100.0));
+            } else if dev > 0.002 {
+                warnings.push(format!("价格偏离信号价 {:.2}%", dev * 100.0));
+            }
+            checks.push(PrecheckCheck {
+                name: "偏离信号价".to_string(),
+                ok: dev <= 0.005,
+                detail: format!("信号 {}，偏离 {:.2}%", id, dev * 100.0),
+            });
+        }
+    }
+
+    Ok(PrecheckResult {
+        ok: blockers.is_empty(),
+        blockers,
+        warnings,
+        checks,
+    })
 }
 
 #[tauri::command]

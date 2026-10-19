@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import type { DeskPayload } from "../lib/types";
 import { fmt, money } from "../lib/format";
+import TicketModal from "./TicketModal.vue";
 
 const props = defineProps<{
   payload: DeskPayload;
@@ -19,6 +20,7 @@ const loose = computed(() => props.payload.scenarios.find((s) => s.key === "loos
 const chips = computed(() =>
   Object.entries(props.payload.stats.vetoReasons ?? {}).map(([k, v]) => ({ k, v }))
 );
+const showTicket = ref(false);
 </script>
 
 <template>
@@ -103,6 +105,30 @@ const chips = computed(() =>
       <div class="note">
         只提示，不下单。复制参数到券商 App 执行，成交后回填。
       </div>
+      <button class="ticket-btn" @click="showTicket = true">生成票据 / 预检</button>
     </template>
+
+    <TicketModal
+      v-if="showTicket && chosen"
+      :signal="chosen"
+      :symbol="payload.meta.symbolId"
+      @close="showTicket = false"
+      @confirmed="showTicket = false"
+    />
   </div>
 </template>
+
+<style scoped>
+.ticket-btn {
+  margin-top: 8px;
+  width: 100%;
+  background: #e8b339;
+  border: 0;
+  color: #171207;
+  border-radius: 4px;
+  padding: 7px 0;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+</style>

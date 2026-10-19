@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::atomic::AtomicBool;
 use std::sync::Mutex;
 use std::time::Instant;
 
@@ -48,6 +49,7 @@ pub struct AppState {
     pub scan_fail: Mutex<HashMap<String, ScanFail>>,
     /// 当前标的的有效底仓成本（bootstrap 后写入，用于浮动盈亏）。
     pub base_cost: Mutex<f64>,
+    pub emergency: AtomicBool,
     /// 上一轮扫描每票的通过数，用于只在“新增通过”时提醒。
     pub last_alert: Mutex<HashMap<String, i64>>,
     pub audit: Mutex<Vec<AuditIssue>>,

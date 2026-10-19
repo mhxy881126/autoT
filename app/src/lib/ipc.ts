@@ -1,6 +1,16 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { AlertEvent, DeskStats, RiskState, Signal, Snapshot } from "./types";
+import type {
+  AlertEvent,
+  DeskStats,
+  LedgerDay,
+  MarketHealth,
+  PrecheckInput,
+  PrecheckResult,
+  RiskState,
+  Signal,
+  Snapshot
+} from "./types";
 
 /** Tauri 2 注入 __TAURI_INTERNALS__；浏览器里为 undefined，用于降级到 demo 数据。 */
 export const isTauri = (): boolean =>
@@ -38,6 +48,18 @@ export async function subscribeRisk(
   handler: (r: RiskState) => void
 ): Promise<UnlistenFn> {
   return listen<RiskState>("risk:update", (event) => handler(event.payload));
+}
+
+export async function subscribeHealth(
+  handler: (h: MarketHealth) => void
+): Promise<UnlistenFn> {
+  return listen<MarketHealth>("health:update", (event) => handler(event.payload));
+}
+
+export async function subscribeLedger(
+  handler: (l: LedgerDay) => void
+): Promise<UnlistenFn> {
+  return listen<LedgerDay>("ledger:update", (event) => handler(event.payload));
 }
 
 /** 批量扫描发现“通过数增加”时推送，用于应用内消息中心。 */

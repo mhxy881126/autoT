@@ -121,6 +121,42 @@ export interface LedgerDay {
   unresolved: number;   // 未闭环 T 笔数，次日必须提示
 }
 
+export interface MarketHealth {
+  phase: string;
+  tradingDay: boolean;
+  lastBar: string;
+  ageSecs: number;
+  stale: boolean;
+  healthy: boolean;
+  emergency: boolean;
+  source: string;
+  message: string;
+}
+
+export interface PrecheckInput {
+  symbol: string;
+  day: string;
+  side: "BUY" | "SELL";
+  price: number;
+  qty: number;
+  signalId?: string;
+  signalT?: string;
+  signalPrice?: number;
+}
+
+export interface PrecheckCheck {
+  name: string;
+  ok: boolean;
+  detail: string;
+}
+
+export interface PrecheckResult {
+  ok: boolean;
+  blockers: string[];
+  warnings: string[];
+  checks: PrecheckCheck[];
+}
+
 export interface StrategyConfig {
   symbol: string;          // "sh600519"
   baseQty: number;

@@ -16,8 +16,11 @@ import type {
   JournalInput,
   JournalStats,
   LedgerDay,
+  MarketHealth,
   MinuteBar,
   MinuteDay,
+  PrecheckInput,
+  PrecheckResult,
   ResearchReport,
   RiskState,
   SampleResult,
@@ -28,7 +31,16 @@ import type {
   WatchItem,
   WatchScan
 } from "../lib/types";
-import { call, isTauri, subscribeAlerts, subscribeRisk, subscribeSignals, subscribeTick } from "../lib/ipc";
+import {
+  call,
+  isTauri,
+  subscribeAlerts,
+  subscribeHealth,
+  subscribeLedger,
+  subscribeRisk,
+  subscribeSignals,
+  subscribeTick
+} from "../lib/ipc";
 
 const demo = demoJson as unknown as DeskPayload;
 
@@ -37,6 +49,7 @@ export const useDeskStore = defineStore("desk", () => {
   const mode = ref<"demo" | "live">("demo");
   const live = ref<Snapshot | null>(null);
   const bootError = ref<string | null>(null);
+  const emergency = ref(false);
   const version = ref<string>("web");
   const fills = ref<Fill[]>([]);
   const ledger = ref<LedgerDay | null>(null);
@@ -105,6 +118,14 @@ export const useDeskStore = defineStore("desk", () => {
       await subscribeRisk((r) => {
         payload.value.risk = r;
       });
+      await subscribeHealth((h) => {
+        payload.value.health = h;
+        emergency.value = h.emergency;
+      });
+      await subscribeLedger((l) => {
+        ledger.value = l;
+      });
+      emergency.value = boot.health?.emergency ?? false;
       await loadAudit();
       await loadFills(boot.meta.date);
       await loadLedger(boot.meta.date);
@@ -148,6 +169,17 @@ export const useDeskStore = defineStore("desk", () => {
     } catch (e) {
       bootError.value = e instanceof Error ? e.message : String(e);
     }
+  }
+
+  async function precheckOrder(input: PrecheckInput): Promise<PrecheckResult> {
+    return call<PrecheckResult>("precheck_order", { input });
+  }
+
+  async function setEmergencyStop(active: boolean): Promise<boolean> {
+    const next = await call<boolean>("set_emergency_stop", { active });
+    emergency.value = next;
+    if (payload.value.health) payload.value.health.emergency = next;
+    return next;
   }
 
   async function loadJournal(day: string, symbol: string): Promise<void> {
@@ -337,6 +369,9 @@ export const useDeskStore = defineStore("desk", () => {
     scan,
     alerts,
     audit,
+    emergency,
+    precheckOrder,
+    setEmergencyStop,
     journal,
     journalStats,
     loadJournal,
