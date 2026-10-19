@@ -150,6 +150,16 @@ export interface PlanInput {
   reason?: string | null;
 }
 
+export interface PlanAudit {
+  id: number;
+  day: string;
+  symbol: string;
+  changedAt: string;
+  reason: string | null;
+  before: DailyPlan | null;
+  after: DailyPlan;
+}
+
 export interface MarketHealth {
   phase: string;
   tradingDay: boolean;

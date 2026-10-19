@@ -22,6 +22,7 @@ import type {
   MinuteDay,
   PrecheckInput,
   PrecheckResult,
+  PlanAudit,
   PlanInput,
   ResearchReport,
   RiskState,
@@ -62,6 +63,7 @@ export const useDeskStore = defineStore("desk", () => {
   const audit = ref<AuditIssue[]>([]);
   const journal = ref<JournalEntry[]>([]);
   const journalStats = ref<JournalStats | null>(null);
+  const planAudit = ref<PlanAudit[]>([]);
   const unread = computed(() => alerts.value.filter((a) => !a.read).length);
 
   function pushAlert(event: AlertEvent): void {
@@ -176,7 +178,13 @@ export const useDeskStore = defineStore("desk", () => {
   async function savePlan(input: PlanInput): Promise<DailyPlan> {
     const plan = await call<DailyPlan>("daily_plan_save", { input });
     payload.value.plan = plan;
+    await loadPlanAudit(input.day, input.symbol);
     return plan;
+  }
+
+  async function loadPlanAudit(day: string, symbol: string): Promise<void> {
+    if (!isTauri() || !day || !symbol) return;
+    planAudit.value = await call<PlanAudit[]>("plan_audit_list", { day, symbol });
   }
 
   async function precheckOrder(input: PrecheckInput): Promise<PrecheckResult> {
@@ -381,6 +389,8 @@ export const useDeskStore = defineStore("desk", () => {
     precheckOrder,
     setEmergencyStop,
     savePlan,
+    planAudit,
+    loadPlanAudit,
     journal,
     journalStats,
     loadJournal,

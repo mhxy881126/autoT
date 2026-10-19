@@ -19,7 +19,7 @@ use crate::history;
 use crate::journal::{self, JournalEntry, JournalInput, JournalStats};
 use crate::ledger::{self, Fill, FillInput, LedgerDay};
 use crate::market::{self, DayBar, Quote};
-use crate::plan::{self, DailyPlan, PlanInput};
+use crate::plan::{self, DailyPlan, PlanAudit, PlanInput};
 use crate::research;
 use crate::risk::{self, RiskState};
 use crate::sample;
@@ -933,7 +933,7 @@ pub fn daily_plan_get(
     symbol: String,
 ) -> Result<Option<DailyPlan>, String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
-    plan::get(&conn, &day_key(&day), &symbol)
+    plan::get(&conn, &day, &symbol)
 }
 
 #[tauri::command]
@@ -943,6 +943,16 @@ pub fn daily_plan_save(
 ) -> Result<DailyPlan, String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     plan::save(&conn, &input)
+}
+
+#[tauri::command]
+pub fn plan_audit_list(
+    state: tauri::State<'_, AppState>,
+    day: String,
+    symbol: String,
+) -> Result<Vec<PlanAudit>, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    plan::audit_list(&conn, &day, &symbol)
 }
 
 #[tauri::command]

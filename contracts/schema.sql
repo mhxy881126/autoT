@@ -113,6 +113,20 @@ CREATE TABLE IF NOT EXISTS daily_plans (
   PRIMARY KEY (trade_day, symbol)
 );
 
+-- 计划审计：每次实际变更留旧值、新值、理由
+CREATE TABLE IF NOT EXISTS plan_audit (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  trade_day   TEXT    NOT NULL,
+  symbol      TEXT    NOT NULL,
+  changed_at  TEXT    NOT NULL,
+  reason      TEXT,
+  before_json TEXT,
+  after_json  TEXT    NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_plan_audit
+  ON plan_audit (trade_day, symbol, id);
+
 -- 信号与否决理由：没有这张表，就无法复盘"为什么没做"
 CREATE TABLE IF NOT EXISTS signals (
   id          TEXT NOT NULL,

@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from "vue";
-import type { PlanLevel } from "../lib/types";
+import { computed, onMounted, reactive, ref, watch } from "vue";
+import type { PlanAudit, PlanLevel } from "../lib/types";
 import { useDeskStore } from "../stores/desk";
 
 const store = useDeskStore();
 const plan = computed(() => store.payload.plan);
+const audit = computed(() => store.planAudit);
+const showAudit = ref(false);
 const show = ref(false);
 const saving = ref(false);
 const msg = ref("");
@@ -38,6 +40,32 @@ function addLevel(): void {
 function removeLevel(i: number): void {
   form.levels.splice(i, 1);
 }
+
+function auditLine(a: PlanAudit): string {
+  if (!a.before) return "初次制定";
+  return `${a.before.bias} ${a.before.maxTrades}次 → ${a.after.bias} ${a.after.maxTrades}次`;
+}
+
+function shortTime(value: string): string {
+  return value.slice(5, 16).replace("T", " ");
+}
+
+onMounted(() => {
+  void store.loadPlanAudit(
+    store.payload.meta.planDate ?? store.payload.meta.date,
+    store.payload.meta.symbolId
+  );
+});
+
+watch(
+  () => [store.payload.meta.planDate, store.payload.meta.symbolId],
+  () => {
+    void store.loadPlanAudit(
+      store.payload.meta.planDate ?? store.payload.meta.date,
+      store.payload.meta.symbolId
+    );
+  }
+);
 
 async function save(): Promise<void> {
   saving.value = true;
@@ -90,6 +118,19 @@ async function save(): Promise<void> {
     <div v-else class="empty">开盘前写下今天的方向、关键价位和风险预算。</div>
 
     <button class="edit" @click="open">{{ plan ? "修改计划" : "制定计划" }}</button>
+    <button v-if="audit.length" class="audit-toggle" @click="showAudit = !showAudit">
+      修改记录 {{ audit.length }} {{ showAudit ? "▴" : "▾" }}
+    </button>
+
+    <div v-if="showAudit && audit.length" class="audit-list">
+      <div v-for="a in audit.slice(0, 6)" :key="a.id" class="audit-item">
+        <div class="audit-head">
+          <span>{{ shortTime(a.changedAt) }}</span>
+          <span class="audit-reason">{{ a.reason ?? "未填理由" }}</span>
+        </div>
+        <div class="audit-change">{{ auditLine(a) }}</div>
+      </div>
+    </div>
 
     <div v-if="show" class="mask" @click.self="show = false">
       <div class="modal">
@@ -226,6 +267,43 @@ async function save(): Promise<void> {
   padding: 4px 0;
   font-size: 10px;
   cursor: pointer;
+}
+.audit-toggle {
+  margin-top: 4px;
+  width: 100%;
+  background: none;
+  border: 0;
+  color: #5f6d84;
+  font-size: 9px;
+  cursor: pointer;
+  text-align: left;
+  padding: 2px 0;
+}
+.audit-list {
+  margin-top: 3px;
+  border-top: 1px solid #1d2431;
+  padding-top: 4px;
+}
+.audit-item {
+  padding: 3px 0;
+}
+.audit-head {
+  display: flex;
+  justify-content: space-between;
+  font: 9px Consolas, monospace;
+  color: #76839a;
+}
+.audit-reason {
+  color: #c8a24a;
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.audit-change {
+  font: 9px Consolas, monospace;
+  color: #9aa7bb;
+  margin-top: 1px;
 }
 .mask {
   position: fixed;

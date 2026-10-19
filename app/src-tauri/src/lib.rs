@@ -57,6 +57,7 @@ pub fn run() {
             commands::market_health,
             commands::daily_plan_get,
             commands::daily_plan_save,
+            commands::plan_audit_list,
             commands::set_emergency_stop,
             commands::precheck_order,
             commands::audit_report,

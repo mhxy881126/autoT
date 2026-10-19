@@ -14,7 +14,7 @@ pub struct PlanLevel {
     pub price: f64,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DailyPlan {
     pub day: String,
@@ -45,6 +45,18 @@ pub struct PlanInput {
     pub reason: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanAudit {
+    pub id: i64,
+    pub day: String,
+    pub symbol: String,
+    pub changed_at: String,
+    pub reason: Option<String>,
+    pub before: Option<DailyPlan>,
+    pub after: DailyPlan,
+}
+
 const SELECT: &str = "SELECT trade_day, symbol, bias, max_trades, risk_budget_pct, levels_json, note, locked, locked_reason, updated_at FROM daily_plans";
 
 fn map(row: &rusqlite::Row<'_>) -> rusqlite::Result<DailyPlan> {
@@ -71,6 +83,48 @@ pub fn get(conn: &Connection, day: &str, symbol: &str) -> Result<Option<DailyPla
             map,
         )
         .ok())
+}
+
+pub fn audit_list(conn: &Connection, day: &str, symbol: &str) -> Result<Vec<PlanAudit>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, trade_day, symbol, changed_at, reason, before_json, after_json
+             FROM plan_audit WHERE trade_day = ?1 AND symbol = ?2 ORDER BY id DESC",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map(params![day, symbol], |row| {
+            let before_json: Option<String> = row.get(5)?;
+            let after_json: String = row.get(6)?;
+            Ok(PlanAudit {
+                id: row.get(0)?,
+                day: row.get(1)?,
+                symbol: row.get(2)?,
+                changed_at: row.get(3)?,
+                reason: row.get(4)?,
+                before: before_json.and_then(|text| serde_json::from_str::<DailyPlan>(&text).ok()),
+                after: serde_json::from_str::<DailyPlan>(&after_json).unwrap_or_else(|_| {
+                    DailyPlan {
+                        day: String::new(),
+                        symbol: String::new(),
+                        bias: "双向".to_string(),
+                        max_trades: 0,
+                        risk_budget_pct: 0.0,
+                        levels: vec![],
+                        note: None,
+                        locked: false,
+                        locked_reason: None,
+                        updated_at: String::new(),
+                    }
+                }),
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row.map_err(|e| e.to_string())?);
+    }
+    Ok(out)
 }
 
 fn clean(value: Option<String>, max: usize) -> Option<String> {
@@ -159,7 +213,16 @@ pub fn save(conn: &Connection, input: &PlanInput) -> Result<DailyPlan, String> {
     };
     let now = Utc::now().to_rfc3339();
 
-    conn.execute(
+    let before_json = existing
+        .as_ref()
+        .map(serde_json::to_string)
+        .transpose()
+        .map_err(|e| e.to_string())?;
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|e| format!("开启计划事务失败: {e}"))?;
+
+    tx.execute(
         "INSERT INTO daily_plans
          (trade_day, symbol, bias, max_trades, risk_budget_pct, levels_json, note,
           locked, locked_reason, created_at, updated_at)
@@ -188,7 +251,21 @@ pub fn save(conn: &Connection, input: &PlanInput) -> Result<DailyPlan, String> {
     )
     .map_err(|e| format!("保存计划失败: {e}"))?;
 
-    get(conn, day, symbol)?.ok_or_else(|| "计划保存后读取失败".to_string())
+    let after = get(&tx, day, symbol)?.ok_or_else(|| "计划保存后读取失败".to_string())?;
+
+    if changed {
+        let after_json = serde_json::to_string(&after).map_err(|e| e.to_string())?;
+        tx.execute(
+            "INSERT INTO plan_audit
+             (trade_day, symbol, changed_at, reason, before_json, after_json)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![day, symbol, now, reason, before_json, after_json],
+        )
+        .map_err(|e| format!("写入计划审计失败: {e}"))?;
+    }
+
+    tx.commit().map_err(|e| format!("提交计划失败: {e}"))?;
+    Ok(after)
 }
 
 #[cfg(test)]
@@ -239,6 +316,40 @@ mod tests {
         let mut i = input();
         i.bias = "追涨".to_string();
         assert!(save(&c, &i).is_err());
+    }
+
+    #[test]
+    fn audit_records_each_change() {
+        let c = conn();
+        save(&c, &input()).expect("create");
+        let first = audit_list(&c, "2026-10-19", "sz000858").expect("audit");
+        assert_eq!(first.len(), 1);
+        assert!(first[0].before.is_none());
+        assert_eq!(first[0].after.max_trades, 3);
+
+        let mut second = input();
+        second.max_trades = 2;
+        save(&c, &second).expect("update");
+        let list = audit_list(&c, "2026-10-19", "sz000858").expect("audit");
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0].before.as_ref().unwrap().max_trades, 3);
+        assert_eq!(list[0].after.max_trades, 2);
+
+        c.execute(
+            "UPDATE daily_plans SET locked = 1 WHERE trade_day = ?1 AND symbol = ?2",
+            params!["2026-10-19", "sz000858"],
+        )
+        .expect("lock");
+        let mut third = input();
+        third.max_trades = 1;
+        third.reason = Some("盘面转弱".to_string());
+        save(&c, &third).expect("reason update");
+        let list = audit_list(&c, "2026-10-19", "sz000858").expect("audit");
+        assert_eq!(list.len(), 3);
+        assert_eq!(list[0].reason.as_deref(), Some("盘面转弱"));
+
+        save(&c, &third).expect("same plan");
+        assert_eq!(audit_list(&c, "2026-10-19", "sz000858").unwrap().len(), 3);
     }
 
     #[test]
