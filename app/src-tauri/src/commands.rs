@@ -1,5 +1,7 @@
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
+use futures::stream::{self, StreamExt};
 use rusqlite::params;
 use serde::Serialize;
 use serde_json::json;
@@ -9,7 +11,7 @@ use crate::features::{self, Bar};
 use crate::ledger::{self, Fill, FillInput, LedgerDay};
 use crate::market::{self, DayBar, Quote};
 use crate::session;
-use crate::state::{AppState, FeedStatus, ScanCacheEntry, SeriesCache};
+use crate::state::{AppState, FeedStatus, ScanCacheEntry, ScanFail, SeriesCache};
 use crate::statement::{self, ImportResult};
 use crate::store;
 use crate::strategy::{self, Signal};
@@ -472,6 +474,15 @@ pub struct WatchScan {
     pub signal_t: Option<String>,
     pub signal_target: Option<f64>,
     pub cached: bool,
+    pub stale: bool,
+}
+
+const SCAN_CONCURRENCY: usize = 4;
+
+fn backoff_delay(failures: u32) -> Duration {
+    let exp = failures.clamp(1, 5) - 1;
+    let secs = 30u64.saturating_mul(1u64 << exp).min(300);
+    Duration::from_secs(secs)
 }
 
 /// 报价时间截断到分钟：同一分钟内分时不会变，可直接复用缓存。
@@ -503,12 +514,15 @@ pub async fn scan_watchlist(state: tauri::State<'_, AppState>) -> Result<Vec<Wat
     let map: HashMap<String, market::Quote> =
         quotes.into_iter().map(|q| (q.symbol.clone(), q)).collect();
 
+    let now = Instant::now();
     let mut bars_by_symbol: HashMap<String, Vec<Bar>> = HashMap::new();
     let mut cached_symbols: HashMap<String, bool> = HashMap::new();
+    let mut stale_symbols: HashMap<String, bool> = HashMap::new();
     let mut misses: Vec<String> = Vec::new();
 
     {
         let cache = state.scan_cache.lock().map_err(|e| e.to_string())?;
+        let fail = state.scan_fail.lock().map_err(|e| e.to_string())?;
         for symbol in &symbols {
             let key = minute_key(map.get(symbol));
             let hit = !key.is_empty()
@@ -521,9 +535,21 @@ pub async fn scan_watchlist(state: tauri::State<'_, AppState>) -> Result<Vec<Wat
                     bars_by_symbol.insert(symbol.clone(), entry.bars.clone());
                 }
                 cached_symbols.insert(symbol.clone(), true);
-            } else {
-                misses.push(symbol.clone());
+                continue;
             }
+
+            // 退避期内不发请求；有旧缓存就降级展示。
+            if let Some(scan_fail) = fail.get(symbol) {
+                if scan_fail.next_retry > now {
+                    stale_symbols.insert(symbol.clone(), true);
+                    if let Some(entry) = cache.get(symbol) {
+                        bars_by_symbol.insert(symbol.clone(), entry.bars.clone());
+                        cached_symbols.insert(symbol.clone(), true);
+                    }
+                    continue;
+                }
+            }
+            misses.push(symbol.clone());
         }
     }
 
@@ -535,14 +561,17 @@ pub async fn scan_watchlist(state: tauri::State<'_, AppState>) -> Result<Vec<Wat
             (symbol, result)
         }
     });
-    let fetched = futures::future::join_all(fetches).await;
+    let fetched: Vec<_> = stream::iter(fetches)
+        .buffer_unordered(SCAN_CONCURRENCY)
+        .collect()
+        .await;
 
     {
         let mut cache = state.scan_cache.lock().map_err(|e| e.to_string())?;
+        let mut fail = state.scan_fail.lock().map_err(|e| e.to_string())?;
         for (symbol, result) in fetched {
-            let mut built_bars = None;
-            if let Ok((_day, raw)) = result {
-                if !raw.is_empty() {
+            let ok = match result {
+                Ok((_day, raw)) if !raw.is_empty() => {
                     let prev_close = map.get(&symbol).map(|q| q.prev_close).unwrap_or(0.0);
                     let bars = features::build(&raw, prev_close);
                     let key = minute_key(map.get(&symbol));
@@ -553,13 +582,30 @@ pub async fn scan_watchlist(state: tauri::State<'_, AppState>) -> Result<Vec<Wat
                             bars: bars.clone(),
                         },
                     );
-                    built_bars = Some(bars);
+                    bars_by_symbol.insert(symbol.clone(), bars);
+                    true
+                }
+                _ => false,
+            };
+
+            if ok {
+                fail.remove(&symbol);
+                cached_symbols.insert(symbol, false);
+            } else {
+                let entry = fail.entry(symbol.clone()).or_insert(ScanFail {
+                    failures: 0,
+                    next_retry: now,
+                });
+                entry.failures += 1;
+                entry.next_retry = now + backoff_delay(entry.failures);
+                stale_symbols.insert(symbol.clone(), true);
+                if let Some(old) = cache.get(&symbol) {
+                    bars_by_symbol.insert(symbol.clone(), old.bars.clone());
+                    cached_symbols.insert(symbol.clone(), true);
+                } else {
+                    cached_symbols.insert(symbol.clone(), false);
                 }
             }
-            if let Some(bars) = built_bars {
-                bars_by_symbol.insert(symbol.clone(), bars);
-            }
-            cached_symbols.insert(symbol, false);
         }
     }
 
@@ -615,6 +661,7 @@ pub async fn scan_watchlist(state: tauri::State<'_, AppState>) -> Result<Vec<Wat
             signal_t,
             signal_target,
             cached,
+            stale: stale_symbols.get(symbol).copied().unwrap_or(false),
         });
     }
 
@@ -623,8 +670,9 @@ pub async fn scan_watchlist(state: tauri::State<'_, AppState>) -> Result<Vec<Wat
 
 #[cfg(test)]
 mod tests {
-    use super::minute_key;
+    use super::{backoff_delay, minute_key};
     use crate::market::Quote;
+    use std::time::Duration;
 
     fn quote(time: &str) -> Quote {
         Quote {
@@ -643,5 +691,16 @@ mod tests {
     fn minute_key_truncates_to_minute() {
         assert_eq!(minute_key(Some(&quote("20261019150003"))), "202610191500");
         assert_eq!(minute_key(None), "");
+    }
+
+    #[test]
+    fn backoff_grows_then_caps() {
+        assert_eq!(backoff_delay(1), Duration::from_secs(30));
+        assert_eq!(backoff_delay(2), Duration::from_secs(60));
+        assert_eq!(backoff_delay(3), Duration::from_secs(120));
+        assert_eq!(backoff_delay(4), Duration::from_secs(240));
+        assert_eq!(backoff_delay(5), Duration::from_secs(300));
+        assert_eq!(backoff_delay(9), Duration::from_secs(300));
+        assert_eq!(backoff_delay(0), Duration::from_secs(30));
     }
 }

@@ -118,7 +118,8 @@ onBeforeUnmount(() => {
             {{ scanOf(item.symbol)?.accepted }} 个信号
           </span>
           <span v-else class="idle">无信号 · {{ scanOf(item.symbol)?.candidates }} 候选</span>
-          <span v-if="scanOf(item.symbol)?.cached" class="cached">缓存</span>
+          <span v-if="scanOf(item.symbol)?.stale" class="stale">重试中</span>
+          <span v-else-if="scanOf(item.symbol)?.cached" class="cached">缓存</span>
           <span
             v-if="(scanOf(item.symbol)?.accepted ?? 0) > 0"
             class="detail"
@@ -269,6 +270,13 @@ onBeforeUnmount(() => {
 .cached {
   color: #4d5a70;
   border: 1px solid #28313f;
+  border-radius: 2px;
+  padding: 0 3px;
+  font-size: 8px;
+}
+.stale {
+  color: #e8b339;
+  border: 1px solid rgba(232, 179, 57, 0.4);
   border-radius: 2px;
   padding: 0 3px;
   font-size: 8px;

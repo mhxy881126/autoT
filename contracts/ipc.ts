@@ -162,6 +162,7 @@ export interface WatchScan {
   signalT: string | null;
   signalTarget: number | null;
   cached: boolean;
+  stale: boolean;
 }
 
 export interface FeedStatus {

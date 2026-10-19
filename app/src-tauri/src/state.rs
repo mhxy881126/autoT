@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
+use std::time::Instant;
 
 use rusqlite::Connection;
 
@@ -29,6 +30,12 @@ pub struct ScanCacheEntry {
     pub bars: Vec<Bar>,
 }
 
+#[derive(Clone, Copy)]
+pub struct ScanFail {
+    pub failures: u32,
+    pub next_retry: Instant,
+}
+
 pub struct AppState {
     pub client: reqwest::Client,
     pub symbol: Mutex<String>,
@@ -37,4 +44,5 @@ pub struct AppState {
     pub db: Mutex<Connection>,
     pub series: Mutex<Option<SeriesCache>>,
     pub scan_cache: Mutex<HashMap<String, ScanCacheEntry>>,
+    pub scan_fail: Mutex<HashMap<String, ScanFail>>,
 }
