@@ -13,6 +13,7 @@ use crate::audit::AuditIssue;
 use crate::backtest;
 use crate::config::{self, StrategyConfig};
 use crate::features::{self, Bar};
+use crate::history;
 use crate::ledger::{self, Fill, FillInput, LedgerDay};
 use crate::market::{self, DayBar, Quote};
 use crate::session;
@@ -318,6 +319,93 @@ pub async fn series(
         });
     }
     Ok(bars)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryImportResult {
+    pub symbol: String,
+    pub days: i64,
+    pub rows: i64,
+    pub skipped: i64,
+}
+
+#[tauri::command]
+pub fn import_minutes_csv(
+    state: tauri::State<'_, AppState>,
+    symbol: String,
+    csv: String,
+) -> Result<HistoryImportResult, String> {
+    let symbol = symbol.trim().to_lowercase();
+    if symbol.len() != 8 {
+        return Err("标的代码格式应为 sh600519 / sz000858".to_string());
+    }
+    let parsed = history::parse_csv(&csv)?;
+    let mut conn = state.db.lock().map_err(|e| e.to_string())?;
+    let mut days = 0i64;
+    for (day, raw) in &parsed.days {
+        store::save_minutes(&mut conn, &symbol, day, raw)?;
+        days += 1;
+    }
+    Ok(HistoryImportResult {
+        symbol,
+        days,
+        rows: parsed.rows,
+        skipped: parsed.skipped,
+    })
+}
+
+/// 多日回测记分卡：按日期顺序读取缓存分钟，未缓存的日期会被跳过。
+#[tauri::command]
+pub fn backtest_range(
+    state: tauri::State<'_, AppState>,
+    symbol: String,
+    days: Vec<String>,
+) -> Result<backtest::Scorecard, String> {
+    let cfg = {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        config::load_for(&conn, &symbol)
+    };
+    let mut days = days;
+    days.sort();
+    days.dedup();
+
+    let mut results = Vec::new();
+    let mut prev_close = 0.0f64;
+    let mut loaded_days = 0i64;
+    {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        for day in &days {
+            let raw = store::load_minutes(&conn, &symbol, day)?;
+            if raw.is_empty() {
+                continue;
+            }
+            let pc = if prev_close > 0.0 {
+                prev_close
+            } else {
+                raw.first().map(|b| b.price).unwrap_or(0.0)
+            };
+            let bars = features::build(&raw, pc);
+            if let Some(last) = raw.last() {
+                prev_close = last.price;
+            }
+            results.push(backtest::run_day(
+                &symbol,
+                day,
+                &bars,
+                &cfg,
+                &backtest::FeeModel::default(),
+                cfg.cash,
+            ));
+            loaded_days += 1;
+        }
+    }
+    if results.is_empty() {
+        return Err(format!("{symbol} 在给定日期范围内没有缓存分钟数据"));
+    }
+    let mut card = backtest::scorecard(&results);
+    card.days = loaded_days;
+    Ok(card)
 }
 
 #[tauri::command]

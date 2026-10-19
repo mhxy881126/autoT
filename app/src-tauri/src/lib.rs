@@ -4,6 +4,7 @@ mod backtest;
 mod commands;
 mod config;
 mod features;
+mod history;
 mod ledger;
 mod market;
 mod session;
@@ -43,6 +44,8 @@ pub fn run() {
             commands::import_statement,
             commands::audit_report,
             commands::backtest_day,
+            commands::backtest_range,
+            commands::import_minutes_csv,
             commands::get_config,
             commands::update_config,
             commands::test_notification,

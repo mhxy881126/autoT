@@ -98,6 +98,7 @@ pub struct BacktestResult {
     pub skipped: Vec<String>,
     pub cash_end: f64,
     pub available_base: i64,
+    pub start_equity: f64,
 }
 
 pub fn run_day(
@@ -162,14 +163,28 @@ fn execute_signals(
             continue;
         }
 
-        let entry_raw = bars[entry_idx].price;
-        if entry_raw <= 0.0 {
+        let is_long = sig.side == "正T";
+        let next_price = bars[entry_idx].price;
+        if next_price <= 0.0 || sig.entry <= 0.0 {
             skipped.push(format!("{}: 成交价异常", sig.id));
             continue;
         }
+        // 限价撮合：买单只能在下一次成交价不高于限价时成交，卖单反之。
+        let entry_raw = if is_long {
+            if next_price > sig.entry {
+                skipped.push(format!("{}: 限价未成交（买）", sig.id));
+                continue;
+            }
+            next_price.min(sig.entry)
+        } else {
+            if next_price < sig.entry {
+                skipped.push(format!("{}: 限价未成交（卖）", sig.id));
+                continue;
+            }
+            next_price.max(sig.entry)
+        };
 
         let slip = fees.slip_rate();
-        let is_long = sig.side == "正T";
         let entry_price = if is_long {
             entry_raw * (1.0 + slip)
         } else {
@@ -275,6 +290,7 @@ fn execute_signals(
     }
 
     let summary = summarize(&trades, cash, cfg.base_qty, bars);
+    let start_equity = cash + cfg.base_qty as f64 * bars.first().map(|b| b.price).unwrap_or(0.0);
     BacktestResult {
         symbol: symbol.to_string(),
         day: day.to_string(),
@@ -283,6 +299,7 @@ fn execute_signals(
         skipped,
         cash_end: round2(cash_balance),
         available_base,
+        start_equity: round2(start_equity),
     }
 }
 
@@ -375,6 +392,138 @@ fn round2(v: f64) -> f64 {
 
 fn round4(v: f64) -> f64 {
     (v * 10_000.0).round() / 10_000.0
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DayNet {
+    pub day: String,
+    pub trades: i64,
+    pub net: f64,
+    pub fees: f64,
+    pub slippage: f64,
+    pub no_trade: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Scorecard {
+    pub symbol: String,
+    pub days: i64,
+    pub days_with_trades: i64,
+    pub no_trade_days: i64,
+    pub trades: i64,
+    pub wins: i64,
+    pub losses: i64,
+    pub gross: f64,
+    pub fees: f64,
+    pub slippage: f64,
+    pub net: f64,
+    pub win_rate: f64,
+    pub profit_factor: f64,
+    pub max_drawdown: f64,
+    pub max_drawdown_pct: f64,
+    pub avg_net_per_day: f64,
+    /// 与“完全不做”的基线差：基线收益为 0，所以等于净收益。
+    pub edge_vs_no_trade: f64,
+    pub daily: Vec<DayNet>,
+}
+
+/// 多日记分卡：按交易日聚合，给出扣成本后的净收益、回撤和 no-trade 天数。
+pub fn scorecard(results: &[BacktestResult]) -> Scorecard {
+    let symbol = results
+        .first()
+        .map(|r| r.symbol.clone())
+        .unwrap_or_default();
+    let mut daily: Vec<DayNet> = Vec::new();
+    let mut gross = 0.0f64;
+    let mut fees = 0.0f64;
+    let mut slippage = 0.0f64;
+    let mut net = 0.0f64;
+    let mut wins = 0i64;
+    let mut losses = 0i64;
+    let mut gross_win = 0.0f64;
+    let mut gross_loss = 0.0f64;
+
+    for r in results {
+        for t in &r.trades {
+            gross += t.gross;
+            fees += t.fees;
+            slippage += t.slippage;
+            net += t.net;
+            if t.net > 0.0 {
+                wins += 1;
+                gross_win += t.net;
+            } else if t.net < 0.0 {
+                losses += 1;
+                gross_loss += t.net.abs();
+            }
+        }
+        daily.push(DayNet {
+            day: r.day.clone(),
+            trades: r.trades.len() as i64,
+            net: r.summary.net,
+            fees: r.summary.fees,
+            slippage: r.summary.slippage,
+            no_trade: r.trades.is_empty(),
+        });
+    }
+
+    daily.sort_by(|a, b| a.day.cmp(&b.day));
+    let mut cum = 0.0f64;
+    let mut peak = 0.0f64;
+    let mut max_dd = 0.0f64;
+    for d in &daily {
+        cum += d.net;
+        peak = peak.max(cum);
+        max_dd = max_dd.max(peak - cum);
+    }
+
+    let days = results.len() as i64;
+    let trades: i64 = results.iter().map(|r| r.trades.len() as i64).sum();
+    let win_rate = if trades > 0 {
+        wins as f64 / trades as f64
+    } else {
+        0.0
+    };
+    let profit_factor = if gross_loss > 0.0 {
+        gross_win / gross_loss
+    } else if gross_win > 0.0 {
+        99.0
+    } else {
+        0.0
+    };
+    let start_equity = results.first().map(|r| r.start_equity).unwrap_or(0.0);
+    let no_trade_days = daily.iter().filter(|d| d.no_trade).count() as i64;
+
+    Scorecard {
+        symbol,
+        days,
+        days_with_trades: days - no_trade_days,
+        no_trade_days,
+        trades,
+        wins,
+        losses,
+        gross: round2(gross),
+        fees: round2(fees),
+        slippage: round2(slippage),
+        net: round2(net),
+        win_rate: round4(win_rate),
+        profit_factor: round4(profit_factor),
+        max_drawdown: round2(max_dd),
+        max_drawdown_pct: if start_equity > 0.0 {
+            round4(max_dd / start_equity)
+        } else {
+            0.0
+        },
+        avg_net_per_day: if days > 0 {
+            round2(net / days as f64)
+        } else {
+            0.0
+        },
+        edge_vs_no_trade: round2(net),
+        daily,
+    }
 }
 
 #[cfg(test)]
@@ -558,5 +707,62 @@ mod tests {
             1_000_000.0,
         );
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn limit_order_not_filled_is_skipped() {
+        let bars = vec![
+            bar("09:30", 100.0),
+            bar("09:31", 101.0),
+            bar("09:32", 102.0),
+        ];
+        let sig = signal("S01", "09:30", "正T", 103.0, 99.0);
+        let r = execute_signals(
+            "sh600519",
+            "2026-10-19",
+            &bars,
+            &[sig],
+            &cfg(),
+            &FeeModel::default(),
+            1_000_000.0,
+        );
+        assert!(r.trades.is_empty());
+        assert!(r.skipped.iter().any(|m| m.contains("限价未成交")));
+    }
+
+    #[test]
+    fn scorecard_aggregates_days_and_no_trade() {
+        let bars = vec![
+            bar("09:30", 100.0),
+            bar("09:31", 100.0),
+            bar("09:32", 101.0),
+        ];
+        let sig = signal("S01", "09:30", "正T", 101.0, 99.0);
+        let day1 = execute_signals(
+            "sh600519",
+            "2026-10-20",
+            &bars,
+            &[sig],
+            &cfg(),
+            &FeeModel::default(),
+            1_000_000.0,
+        );
+        let day2 = execute_signals(
+            "sh600519",
+            "2026-10-21",
+            &bars,
+            &[],
+            &cfg(),
+            &FeeModel::default(),
+            1_000_000.0,
+        );
+        let sc = scorecard(&[day1.clone(), day2]);
+        assert_eq!(sc.days, 2);
+        assert_eq!(sc.no_trade_days, 1);
+        assert_eq!(sc.trades, 1);
+        assert_eq!(sc.daily.len(), 2);
+        assert_eq!(sc.net, day1.summary.net);
+        assert_eq!(sc.edge_vs_no_trade, sc.net);
+        assert!(sc.avg_net_per_day.abs() < sc.net.abs());
     }
 }
