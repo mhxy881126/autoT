@@ -5,6 +5,7 @@ mod market;
 mod session;
 mod state;
 mod store;
+mod strategy;
 
 use std::sync::Mutex;
 use std::time::{Duration, Instant};

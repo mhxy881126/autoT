@@ -62,7 +62,7 @@ CREATE INDEX IF NOT EXISTS idx_pairs_day ON t_pairs (trade_day, status);
 
 -- 信号与否决理由：没有这张表，就无法复盘"为什么没做"
 CREATE TABLE IF NOT EXISTS signals (
-  id          TEXT PRIMARY KEY,
+  id          TEXT NOT NULL,
   trade_day   TEXT NOT NULL,
   ts          TEXT NOT NULL,
   side        TEXT NOT NULL,
@@ -76,7 +76,8 @@ CREATE TABLE IF NOT EXISTS signals (
   accepted     INTEGER NOT NULL CHECK (accepted IN (0,1)),
   veto_json    TEXT,                               -- string[]
   why_json     TEXT,                               -- string[]
-  created_at   TEXT NOT NULL
+  created_at   TEXT NOT NULL,
+  PRIMARY KEY (trade_day, id)                      -- 每日内唯一，S01 不会跨日冲突
 );
 
 CREATE INDEX IF NOT EXISTS idx_signals_day ON signals (trade_day, ts);

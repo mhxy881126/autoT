@@ -11,6 +11,9 @@ const props = defineProps<{
 const signals = computed(() => props.payload.signals);
 const accepted = computed(() => signals.value.filter((s) => s.accepted));
 const lastSig = computed(() => signals.value[signals.value.length - 1]);
+const chosen = computed(() =>
+  accepted.value.length ? accepted.value[accepted.value.length - 1] : lastSig.value
+);
 const loose = computed(() => props.payload.scenarios.find((s) => s.key === "loose"));
 
 const chips = computed(() =>
@@ -76,25 +79,25 @@ const chips = computed(() =>
       </div>
     </template>
 
-    <template v-else-if="lastSig">
-      <div class="verdict">{{ lastSig.side }} · {{ lastSig.price.toFixed(2) }}</div>
+    <template v-else-if="chosen">
+      <div class="verdict">{{ chosen.side }} · {{ chosen.price.toFixed(2) }}</div>
       <div class="verdict-sub">
-        置信 {{ lastSig.conf }}%　有效期 3 分钟　regime {{ lastSig.regime }}
+        置信 {{ chosen.conf }}%　有效期 3 分钟　regime {{ chosen.regime }}
       </div>
 
       <div class="chips">
-        <span v-for="w in lastSig.why" :key="w" class="chip">{{ w }}</span>
+        <span v-for="w in chosen.why" :key="w" class="chip">{{ w }}</span>
       </div>
 
       <div class="divider"></div>
 
       <div class="kv">
-        <div>入场区间 <span>{{ lastSig.entry.toFixed(2) }}</span></div>
-        <div>数量 <span>{{ lastSig.qty }} 股</span></div>
-        <div>目标 <span>{{ lastSig.target.toFixed(2) }}</span></div>
-        <div>止损 <span>{{ lastSig.stop.toFixed(2) }}</span></div>
-        <div>预期毛利 <span>{{ (lastSig.gross * 100).toFixed(2) }}%</span></div>
-        <div>预期净利 <span>{{ (lastSig.net * 100).toFixed(2) }}%</span></div>
+        <div>入场区间 <span>{{ chosen.entry.toFixed(2) }}</span></div>
+        <div>数量 <span>{{ chosen.qty }} 股</span></div>
+        <div>目标 <span>{{ chosen.target.toFixed(2) }}</span></div>
+        <div>止损 <span>{{ chosen.stop.toFixed(2) }}</span></div>
+        <div>预期毛利 <span>{{ (chosen.gross * 100).toFixed(2) }}%</span></div>
+        <div>预期净利 <span>{{ (chosen.net * 100).toFixed(2) }}%</span></div>
       </div>
 
       <div class="note">

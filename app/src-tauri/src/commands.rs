@@ -7,6 +7,7 @@ use crate::market::{self, DayBar, Quote};
 use crate::session;
 use crate::state::{AppState, FeedStatus, SeriesCache};
 use crate::store;
+use crate::strategy::{self, Signal};
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -96,6 +97,26 @@ fn build_kline(daily: &[DayBar]) -> Vec<serde_json::Value> {
         .collect()
 }
 
+fn stats_for(signals: &[Signal]) -> serde_json::Value {
+    let mut veto: std::collections::BTreeMap<String, i64> = std::collections::BTreeMap::new();
+    for s in signals {
+        for v in &s.veto {
+            let key = v.split('（').next().unwrap_or(v.as_str()).to_string();
+            *veto.entry(key).or_insert(0) += 1;
+        }
+    }
+    let accepted = signals.iter().filter(|s| s.accepted).count();
+    json!({
+        "candidates": signals.len(),
+        "accepted": accepted,
+        "filled": 0, "wins": 0, "losses": 0, "winRate": 0.0,
+        "avgNetPct": 0.0, "avgWin": 0.0, "avgLoss": 0.0,
+        "totalNet": 0.0, "totalCost": 0.0, "totalGross": 0.0,
+        "costRatio": null, "maxDd": 0.0,
+        "vetoReasons": veto
+    })
+}
+
 /// 启动时拉一次全量：快照 + 分时 + 日K，组装成前端直接可渲染的 DeskPayload。
 #[tauri::command]
 pub async fn bootstrap(state: tauri::State<'_, AppState>) -> Result<serde_json::Value, String> {
@@ -119,6 +140,13 @@ pub async fn bootstrap(state: tauri::State<'_, AppState>) -> Result<serde_json::
             prev_close: quote.prev_close,
             bars: bars.clone(),
         });
+    }
+
+    let day_fmt = fmt_day(&day);
+    let signals = strategy::scan(&bars, &day_fmt, 1000);
+    {
+        let mut conn = state.db.lock().map_err(|e| e.to_string())?;
+        let _ = store::save_signals(&mut conn, &day_fmt, &signals);
     }
 
     let daily = market::fetch_daily(&state.client, &symbol, 120).await?;
@@ -147,6 +175,22 @@ pub async fn bootstrap(state: tauri::State<'_, AppState>) -> Result<serde_json::
         }),
     };
 
+    let accepted_n = signals.iter().filter(|s| s.accepted).count();
+    let conclusion = if accepted_n > 0 {
+        format!(
+            "今日 {} 个候选，{} 个通过，按纪律执行。",
+            signals.len(),
+            accepted_n
+        )
+    } else {
+        format!(
+            "今日 {} 个候选全部否决：回归空间不足以覆盖 {:.2}% 往返成本。",
+            signals.len(),
+            strategy::COST_PCT * 100.0
+        )
+    };
+    let stats = stats_for(&signals);
+
     let code = symbol.get(2..).unwrap_or("").to_string();
     let market_code = symbol.get(..2).unwrap_or("").to_uppercase();
 
@@ -155,7 +199,7 @@ pub async fn bootstrap(state: tauri::State<'_, AppState>) -> Result<serde_json::
             "symbol": quote.name,
             "code": code,
             "market": market_code,
-            "date": fmt_day(&day),
+            "date": day_fmt,
             "prevClose": quote.prev_close,
             "open": quote.open,
             "high": quote.high,
@@ -164,7 +208,7 @@ pub async fn bootstrap(state: tauri::State<'_, AppState>) -> Result<serde_json::
             "atrPct": atr_pct,
             "generatedAt": session::now_cn().format("%Y-%m-%d %H:%M:%S").to_string(),
             "mode": "live",
-            "conclusion": "分时与 regime 由 Rust 计算；信号引擎在 D5–D6 接入。"
+            "conclusion": conclusion
         },
         "account": {
             "baseQty": 1000,
@@ -176,15 +220,10 @@ pub async fn bootstrap(state: tauri::State<'_, AppState>) -> Result<serde_json::
         },
         "minutes": bars,
         "kline": kline,
-        "signals": [],
+        "signals": signals,
         "trades": [],
         "equity": [],
-        "stats": {
-            "candidates": 0, "accepted": 0, "filled": 0, "wins": 0, "losses": 0,
-            "winRate": 0.0, "avgNetPct": 0.0, "avgWin": 0.0, "avgLoss": 0.0,
-            "totalNet": 0.0, "totalCost": 0.0, "totalGross": 0.0,
-            "costRatio": null, "maxDd": 0.0, "vetoReasons": {}
-        },
+        "stats": stats,
         "scenarios": [],
         "sensitivity": [],
         "last": last

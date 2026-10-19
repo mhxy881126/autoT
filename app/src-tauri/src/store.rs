@@ -3,6 +3,7 @@ use std::path::Path;
 use rusqlite::{params, Connection};
 
 use crate::market::RawBar;
+use crate::strategy::Signal;
 
 /// 打开账本并执行 schema。路径由调用方决定（app_data_dir/desk.db）。
 pub fn open(path: &Path) -> Result<Connection, String> {
@@ -66,4 +67,50 @@ pub fn load_minutes(conn: &Connection, day: &str) -> Result<Vec<RawBar>, String>
         out.push(row.map_err(|e| e.to_string())?);
     }
     Ok(out)
+}
+
+/// 覆盖写入某日信号。信号是派生结果，重算后整体替换，避免旧否决理由残留。
+pub fn save_signals(conn: &mut Connection, day: &str, signals: &[Signal]) -> Result<(), String> {
+    let tx = conn
+        .transaction()
+        .map_err(|e| format!("开启信号事务失败: {e}"))?;
+    tx.execute("DELETE FROM signals WHERE trade_day = ?1", params![day])
+        .map_err(|e| format!("清理信号失败: {e}"))?;
+
+    let now = chrono::Utc::now().to_rfc3339();
+    {
+        let mut stmt = tx
+            .prepare(
+                "INSERT INTO signals
+                 (id, trade_day, ts, side, price_cents, target_cents, stop_cents, qty, z, regime, conf,
+                  accepted, veto_json, why_json, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+            )
+            .map_err(|e| format!("准备信号写入失败: {e}"))?;
+
+        for s in signals {
+            let veto = serde_json::to_string(&s.veto).unwrap_or_else(|_| "[]".to_string());
+            let why = serde_json::to_string(&s.why).unwrap_or_else(|_| "[]".to_string());
+            stmt.execute(params![
+                &s.id,
+                day,
+                &s.t,
+                &s.side,
+                (s.price * 100.0).round() as i64,
+                (s.target * 100.0).round() as i64,
+                (s.stop * 100.0).round() as i64,
+                s.qty,
+                s.z,
+                &s.regime,
+                s.conf,
+                if s.accepted { 1 } else { 0 },
+                veto,
+                why,
+                &now
+            ])
+            .map_err(|e| format!("写入信号失败: {e}"))?;
+        }
+    }
+
+    tx.commit().map_err(|e| format!("提交信号失败: {e}"))
 }

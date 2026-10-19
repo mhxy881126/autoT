@@ -163,8 +163,10 @@ onMounted(async () => {
             </span>
           </div>
           <div class="empty" style="padding: 14px 4px; text-align: left; color: #4d5a70">
-            共 {{ payload.signals.length }} 个候选，全部被硬门槛拦下（价差 / regime / 成本）。
-            这不是故障，是今日的结论。
+            共 {{ payload.signals.length }} 个候选，{{ payload.stats.accepted }} 个通过。
+            <template v-if="payload.stats.accepted === 0">
+              全部被硬门槛拦下（价差 / regime / 成本）。这不是故障，是今日的结论。
+            </template>
           </div>
         </template>
         <div v-else class="empty">
