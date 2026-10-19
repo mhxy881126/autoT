@@ -88,3 +88,41 @@ jobs:
           name: macos-dmg
           if-no-files-found: error
           path: app/src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+
+  publish:
+    name: publish GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows, macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify tag matches app version
+        run: |
+          VERSION=$(node -p "require('./app/src-tauri/tauri.conf.json').version")
+          if [ "v$VERSION" != "$GITHUB_REF_NAME" ]; then
+            echo "tag $GITHUB_REF_NAME does not match app version v$VERSION"
+            exit 1
+          fi
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: List release files
+        run: find dist -maxdepth 3 -type f -print
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: 做T决策台 ${{ github.ref_name }}
+          body: |
+            A股做T决策台 ${{ github.ref_name }}
+
+            - Windows：NSIS / MSI（未签名）
+            - macOS：universal dmg，覆盖 Apple Silicon 与 Intel（未签名、未公证）
+            - 当前不含自动更新，请手动下载安装
+          files: |
+            dist/nsis/*.exe
+            dist/msi/*.msi
+            dist/*.dmg
+          fail_on_unmatched_files: true
+          generate_release_notes: false
