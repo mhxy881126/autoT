@@ -703,6 +703,65 @@ pub fn risk_state(
     Ok(risk::evaluate(&cfg, &ledger_day, equity, day_amount, price))
 }
 
+/// 手工回填/冲正/导入后，用当前缓存的分时重算信号与风控，避免顶栏状态过期。
+#[tauri::command]
+pub fn refresh_signals(state: tauri::State<'_, AppState>) -> Result<serde_json::Value, String> {
+    let cfg = state.config.lock().map_err(|e| e.to_string())?.clone();
+    let symbol = cfg.symbol.clone();
+    let (day, bars) = {
+        let cache = state.series.lock().map_err(|e| e.to_string())?;
+        match cache.as_ref() {
+            Some(c) => (c.day.clone(), c.bars.clone()),
+            None => return Err("分时缓存为空，请先刷新行情".to_string()),
+        }
+    };
+    let day_fmt = fmt_day(&day);
+    let price = bars.last().map(|b| b.price).unwrap_or(0.0);
+    let day_amount = {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        store::load_minutes(&conn, &symbol, &day)?
+            .last()
+            .map(|b| b.cum_amt)
+            .unwrap_or(0.0)
+    };
+
+    let mut signals = strategy::scan(&bars, &day_fmt, &cfg);
+    let risk_state = risk_filter(
+        &state,
+        &cfg,
+        &symbol,
+        &day_fmt,
+        price,
+        day_amount,
+        &mut signals,
+    );
+    {
+        let mut conn = state.db.lock().map_err(|e| e.to_string())?;
+        let _ = store::save_signals(&mut conn, &day_fmt, &signals);
+    }
+    let stats = stats_for(&signals);
+    let accepted = signals.iter().filter(|s| s.accepted).count();
+    let conclusion = if accepted > 0 {
+        format!(
+            "今日 {} 个候选，{} 个通过，按纪律执行。",
+            signals.len(),
+            accepted
+        )
+    } else {
+        format!(
+            "今日 {} 个候选全部否决：回归空间不足以覆盖 {:.2}% 往返成本。",
+            signals.len(),
+            strategy::COST_PCT * 100.0
+        )
+    };
+    Ok(json!({
+        "signals": signals,
+        "stats": stats,
+        "conclusion": conclusion,
+        "risk": risk_state
+    }))
+}
+
 #[tauri::command]
 pub fn audit_report(state: tauri::State<'_, AppState>) -> Result<Vec<AuditIssue>, String> {
     Ok(state.audit.lock().map_err(|e| e.to_string())?.clone())

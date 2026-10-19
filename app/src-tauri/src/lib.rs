@@ -51,6 +51,7 @@ pub fn run() {
             commands::journal_delete,
             commands::journal_stats,
             commands::risk_state,
+            commands::refresh_signals,
             commands::audit_report,
             commands::backtest_day,
             commands::backtest_range,
@@ -184,7 +185,7 @@ pub fn run() {
                                         let day_amount =
                                             raw.last().map(|b| b.cum_amt).unwrap_or(0.0);
                                         let app_state = handle.state::<AppState>();
-                                        let _ = commands::risk_filter(
+                                        let risk_state = commands::risk_filter(
                                             &app_state,
                                             &cfg,
                                             &symbol,
@@ -193,6 +194,7 @@ pub fn run() {
                                             day_amount,
                                             &mut signals,
                                         );
+                                        let _ = handle.emit("risk:update", &risk_state);
                                         let stats = commands::stats_for(&signals);
 
                                         if let Ok(mut conn) = handle.state::<AppState>().db.lock() {

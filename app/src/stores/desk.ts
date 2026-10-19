@@ -7,6 +7,7 @@ import type {
   AuditIssue,
   BacktestResult,
   DeskPayload,
+  DeskStats,
   Fill,
   FillInput,
   HistoryImportResult,
@@ -18,14 +19,16 @@ import type {
   MinuteBar,
   MinuteDay,
   ResearchReport,
+  RiskState,
   SampleResult,
   Scorecard,
+  Signal,
   Snapshot,
   StrategyConfig,
   WatchItem,
   WatchScan
 } from "../lib/types";
-import { call, isTauri, subscribeAlerts, subscribeSignals, subscribeTick } from "../lib/ipc";
+import { call, isTauri, subscribeAlerts, subscribeRisk, subscribeSignals, subscribeTick } from "../lib/ipc";
 
 const demo = demoJson as unknown as DeskPayload;
 
@@ -99,6 +102,9 @@ export const useDeskStore = defineStore("desk", () => {
         payload.value.meta.conclusion = p.conclusion;
       });
       await subscribeAlerts((a) => pushAlert(a));
+      await subscribeRisk((r) => {
+        payload.value.risk = r;
+      });
       await loadAudit();
       await loadFills(boot.meta.date);
       await loadLedger(boot.meta.date);
@@ -261,7 +267,22 @@ export const useDeskStore = defineStore("desk", () => {
     const fill = await call<Fill>("submit_fill", { input });
     await loadFills(input.day);
     await loadLedger(input.day);
+    await refreshSignals().catch(() => {});
     return fill;
+  }
+
+  async function refreshSignals(): Promise<void> {
+    if (!isTauri()) return;
+    const r = await call<{
+      signals: Signal[];
+      stats: DeskStats;
+      conclusion: string;
+      risk: RiskState;
+    }>("refresh_signals");
+    payload.value.signals = r.signals;
+    payload.value.stats = r.stats;
+    payload.value.meta.conclusion = r.conclusion;
+    payload.value.risk = r.risk;
   }
 
   async function loadLedger(day: string): Promise<void> {
@@ -277,6 +298,7 @@ export const useDeskStore = defineStore("desk", () => {
     await call<void>("void_fill", { id });
     await loadFills(day);
     await loadLedger(day);
+    await refreshSignals().catch(() => {});
   }
 
   async function importStatement(
@@ -292,6 +314,7 @@ export const useDeskStore = defineStore("desk", () => {
     });
     await loadFills(day);
     await loadLedger(day);
+    await refreshSignals().catch(() => {});
     return result;
   }
 
@@ -341,6 +364,7 @@ export const useDeskStore = defineStore("desk", () => {
     loadLedger,
     submitFill,
     voidFill,
-    importStatement
+    importStatement,
+    refreshSignals
   };
 });

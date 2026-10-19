@@ -63,6 +63,22 @@ async function undoFill(id: number): Promise<void> {
 
 const importing = ref(false);
 const importMsg = ref("");
+const refreshing = ref(false);
+const refreshMsg = ref("");
+
+async function refreshRisk(): Promise<void> {
+  if (!canWrite || refreshing.value) return;
+  refreshing.value = true;
+  refreshMsg.value = "";
+  try {
+    await store.refreshSignals();
+    refreshMsg.value = "信号与风控已刷新";
+  } catch (e) {
+    refreshMsg.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    refreshing.value = false;
+  }
+}
 
 async function onStatementFile(ev: Event): Promise<void> {
   const input = ev.target as HTMLInputElement;
@@ -301,6 +317,13 @@ onMounted(async () => {
         </table>
         <div v-else class="empty" style="padding: 8px 4px">0 笔成交 · 严格门槛下无可执行信号</div>
 
+        <div v-if="canWrite" class="refresh-row">
+          <button class="mini-btn" :disabled="refreshing" @click="refreshRisk">
+            {{ refreshing ? "刷新中…" : "刷新信号 / 风控" }}
+          </button>
+          <span v-if="refreshMsg" class="refresh-msg">{{ refreshMsg }}</span>
+        </div>
+
         <div v-if="canWrite && store.ledger" style="margin-top: 8px">
           <div class="kv">
             <div>持仓 <span>{{ store.ledger?.position.baseQty ?? 0 }} 股</span></div>
@@ -400,6 +423,16 @@ onMounted(async () => {
 .mini-btn:disabled {
   cursor: default;
   color: #4d5a70;
+}
+.refresh-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+.refresh-msg {
+  font-size: 9px;
+  color: #c8b483;
 }
 .file {
   width: 100%;
