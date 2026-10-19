@@ -9,10 +9,12 @@ import Panels from "./components/Panels.vue";
 import WatchList from "./components/WatchList.vue";
 import SettingsPanel from "./components/SettingsPanel.vue";
 import GuidePanel from "./components/GuidePanel.vue";
+import NotificationCenter from "./components/NotificationCenter.vue";
 
 const store = useDeskStore();
 const showSettings = ref(false);
 const showGuide = ref(false);
+const showAlerts = ref(false);
 const payload = computed(() => store.payload);
 const meta = computed(() => payload.value.meta);
 const account = computed(() => payload.value.account);
@@ -51,6 +53,9 @@ onMounted(() => {
         {{ store.mode === "live" ? "实时" : "回放" }}
       </div>
       <div class="spacer"></div>
+      <button class="ghost bell" @click="showAlerts = true">
+        消息<span v-if="store.unread" class="badge">{{ store.unread }}</span>
+      </button>
       <button class="ghost" @click="showGuide = true">怎么用</button>
       <button class="ghost" @click="showSettings = true">设置</button>
       <div class="quote">
@@ -166,6 +171,7 @@ onMounted(() => {
 
     <SettingsPanel v-if="showSettings" @close="showSettings = false" />
     <GuidePanel v-if="showGuide" @close="showGuide = false" />
+    <NotificationCenter v-if="showAlerts" @close="showAlerts = false" />
   </div>
 </template>
 
@@ -221,5 +227,21 @@ onMounted(() => {
 }
 .sig-item b {
   color: #ffffff;
+}
+.bell {
+  position: relative;
+}
+.badge {
+  display: inline-block;
+  min-width: 14px;
+  height: 14px;
+  line-height: 14px;
+  border-radius: 7px;
+  background: #ef5350;
+  color: #1a0b0b;
+  font: 9px Consolas, monospace;
+  text-align: center;
+  margin-left: 4px;
+  padding: 0 3px;
 }
 </style>

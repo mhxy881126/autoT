@@ -140,6 +140,17 @@ export interface StrategyConfig {
 
 export type Config = StrategyConfig;
 
+export interface AlertEvent {
+  symbol: string;
+  name: string;
+  accepted: number;
+  side: string;
+  t: string;
+  target: number | null;
+  at: string;
+  test: boolean;
+}
+
 export interface WatchItem {
   symbol: string;
   name: string;

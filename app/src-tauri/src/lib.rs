@@ -12,6 +12,8 @@ mod strategy;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{Emitter, Manager};
 
 use state::{AppState, FeedStatus, SeriesCache};
@@ -33,6 +35,7 @@ pub fn run() {
             commands::get_config,
             commands::update_config,
             commands::test_notification,
+            commands::test_alert,
             commands::list_watchlist,
             commands::scan_watchlist,
             commands::add_symbol,
@@ -63,6 +66,41 @@ pub fn run() {
             });
 
             let handle = app.handle().clone();
+
+            // 托盘常驻：关闭窗口只隐藏，退出走托盘菜单。
+            let show_item = MenuItem::with_id(app, "show", "显示主窗口", true, None::<&str>)?;
+            let quit_item = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
+            TrayIconBuilder::with_id("main")
+                .icon(app.default_window_icon().expect("app icon missing").clone())
+                .tooltip("做T决策台")
+                .menu(&menu)
+                .show_menu_on_left_click(false)
+                .on_menu_event(|app, event| match event.id.as_ref() {
+                    "show" => {
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
+                    }
+                    "quit" => app.exit(0),
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        let app = tray.app_handle();
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
+                    }
+                })
+                .build(app)?;
 
             // 行情时钟在 Rust，不在 WebView。
             // 窗口最小化/失焦时 WebView 定时器会被节流，这条链路不受影响。
@@ -220,6 +258,12 @@ pub fn run() {
             });
 
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.hide();
+            }
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

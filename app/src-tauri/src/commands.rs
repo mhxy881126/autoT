@@ -6,6 +6,7 @@ use rusqlite::params;
 use serde::Serialize;
 use serde_json::json;
 
+use tauri::Emitter;
 use tauri_plugin_notification::NotificationExt;
 
 use crate::config::{self, StrategyConfig};
@@ -320,6 +321,22 @@ pub async fn series(
 #[tauri::command]
 pub fn get_config(state: tauri::State<'_, AppState>) -> Result<StrategyConfig, String> {
     Ok(state.config.lock().map_err(|e| e.to_string())?.clone())
+}
+
+#[tauri::command]
+pub fn test_alert(app: tauri::AppHandle) -> Result<(), String> {
+    let payload = json!({
+        "symbol": "test",
+        "name": "测试提醒",
+        "accepted": 1,
+        "side": "正T",
+        "t": "10:30",
+        "target": 0.0,
+        "at": crate::session::now_cn().format("%H:%M:%S").to_string(),
+        "test": true
+    });
+    app.emit("signals:alert", payload)
+        .map_err(|e| format!("发送测试提醒失败: {e}"))
 }
 
 #[tauri::command]
@@ -709,6 +726,21 @@ pub async fn scan_watchlist(
                     .title("做T信号")
                     .body(body)
                     .show();
+                let payload = json!({
+                    "symbol": item.symbol,
+                    "name": label,
+                    "accepted": item.accepted,
+                    "side": side,
+                    "t": t,
+                    "target": item.signal_target,
+                    "at": crate::session::now_cn().format("%H:%M:%S").to_string(),
+                    "test": false
+                });
+                let _ = app.emit("signals:alert", payload);
+                if let Some(tray) = app.tray_by_id("main") {
+                    let _ =
+                        tray.set_tooltip(Some(format!("做T信号 · {label} {} 个", item.accepted)));
+                }
             }
         }
         last.clear();

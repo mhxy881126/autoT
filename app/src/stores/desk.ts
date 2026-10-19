@@ -2,6 +2,8 @@ import { defineStore } from "pinia";
 import { computed, ref } from "vue";
 import demoJson from "../data/demo.json";
 import type {
+  AlertEvent,
+  AlertItem,
   DeskPayload,
   Fill,
   FillInput,
@@ -13,7 +15,7 @@ import type {
   WatchItem,
   WatchScan
 } from "../lib/types";
-import { call, isTauri, subscribeSignals, subscribeTick } from "../lib/ipc";
+import { call, isTauri, subscribeAlerts, subscribeSignals, subscribeTick } from "../lib/ipc";
 
 const demo = demoJson as unknown as DeskPayload;
 
@@ -28,6 +30,27 @@ export const useDeskStore = defineStore("desk", () => {
   const config = ref<StrategyConfig | null>(null);
   const watchlist = ref<WatchItem[]>([]);
   const scan = ref<WatchScan[]>([]);
+  const alerts = ref<AlertItem[]>([]);
+  const unread = computed(() => alerts.value.filter((a) => !a.read).length);
+
+  function pushAlert(event: AlertEvent): void {
+    alerts.value.unshift({
+      ...event,
+      id: Date.now() + Math.random(),
+      read: false
+    });
+    if (alerts.value.length > 50) alerts.value.length = 50;
+  }
+
+  function markAlertsRead(): void {
+    alerts.value.forEach((a) => {
+      a.read = true;
+    });
+  }
+
+  function clearAlerts(): void {
+    alerts.value = [];
+  }
 
   const minutes = computed<MinuteBar[]>(() => {
     const base = payload.value.minutes.slice();
@@ -62,6 +85,7 @@ export const useDeskStore = defineStore("desk", () => {
         payload.value.stats = p.stats;
         payload.value.meta.conclusion = p.conclusion;
       });
+      await subscribeAlerts((a) => pushAlert(a));
       await loadFills(boot.meta.date);
       await loadLedger(boot.meta.date);
       await loadWatchlist();
@@ -200,6 +224,11 @@ export const useDeskStore = defineStore("desk", () => {
     config,
     watchlist,
     scan,
+    alerts,
+    unread,
+    pushAlert,
+    markAlertsRead,
+    clearAlerts,
     load,
     loadConfig,
     reload,

@@ -1,6 +1,11 @@
 export * from "../../../contracts/ipc";
 
-import type { KLine, MinuteBar, Signal, Snapshot } from "../../../contracts/ipc";
+import type { AlertEvent, KLine, MinuteBar, Signal, Snapshot } from "../../../contracts/ipc";
+
+export interface AlertItem extends AlertEvent {
+  id: number;
+  read: boolean;
+}
 
 export interface DeskMeta {
   symbol: string;
