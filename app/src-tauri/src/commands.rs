@@ -12,6 +12,7 @@ use tauri_plugin_notification::NotificationExt;
 
 use crate::audit::AuditIssue;
 use crate::backtest;
+use crate::calendar;
 use crate::config::{self, StrategyConfig};
 use crate::features::{self, Bar};
 use crate::history;
@@ -202,12 +203,15 @@ pub(crate) fn stats_for(signals: &[Signal]) -> serde_json::Value {
 }
 
 fn plan_date_cn() -> String {
-    use chrono::{Datelike, Duration, Weekday};
-    let mut day = session::now_cn().date_naive();
-    while matches!(day.weekday(), Weekday::Sat | Weekday::Sun) {
-        day += Duration::days(1);
+    use chrono::Timelike;
+    let now = session::now_cn();
+    let mut day = now.date_naive();
+    if now.hour() >= 15 {
+        day += chrono::Duration::days(1);
     }
-    day.format("%Y-%m-%d").to_string()
+    calendar::current_or_next(day)
+        .format("%Y-%m-%d")
+        .to_string()
 }
 
 /// 启动时拉一次全量：快照 + 分时 + 日K，组装成前端直接可渲染的 DeskPayload。
@@ -849,6 +853,7 @@ pub struct MarketHealth {
     pub stale: bool,
     pub healthy: bool,
     pub emergency: bool,
+    pub calendar_covered: bool,
     pub source: String,
     pub message: String,
 }
@@ -886,7 +891,8 @@ pub fn health_for(state: &AppState) -> MarketHealth {
     let emergency = state.emergency.load(Ordering::SeqCst);
     let stale = phase == "交易" && (age_secs < 0 || age_secs > 90);
     let healthy = !emergency && !stale;
-    let message = if emergency {
+    let covered = calendar::is_covered(now.date_naive());
+    let mut message = if emergency {
         "全局急停".to_string()
     } else if stale {
         format!("行情断流 {age_secs}s")
@@ -899,6 +905,9 @@ pub fn health_for(state: &AppState) -> MarketHealth {
             _ => "休市".to_string(),
         }
     };
+    if !covered {
+        message.push_str(" · 日历未覆盖");
+    }
     MarketHealth {
         phase,
         trading_day: session::is_trading_day(&now),
@@ -907,6 +916,7 @@ pub fn health_for(state: &AppState) -> MarketHealth {
         stale,
         healthy,
         emergency,
+        calendar_covered: covered,
         source: state
             .feed
             .lock()

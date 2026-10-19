@@ -158,6 +158,7 @@ export interface MarketHealth {
   stale: boolean;
   healthy: boolean;
   emergency: boolean;
+  calendarCovered: boolean;
   source: string;
   message: string;
 }

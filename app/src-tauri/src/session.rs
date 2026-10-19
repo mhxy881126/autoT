@@ -1,4 +1,6 @@
-use chrono::{DateTime, Datelike, FixedOffset, Timelike, Utc, Weekday};
+use chrono::{DateTime, Datelike, FixedOffset, Timelike, Utc};
+
+use crate::calendar;
 
 /// 所有交易日判断统一走 Asia/Shanghai，不依赖系统时区。
 pub fn now_cn() -> DateTime<FixedOffset> {
@@ -7,7 +9,7 @@ pub fn now_cn() -> DateTime<FixedOffset> {
 }
 
 pub fn is_trading_day(dt: &DateTime<FixedOffset>) -> bool {
-    !matches!(dt.weekday(), Weekday::Sat | Weekday::Sun)
+    calendar::is_trading_day(dt.date_naive())
 }
 
 pub fn is_trading_time(dt: &DateTime<FixedOffset>) -> bool {

@@ -1,6 +1,7 @@
 mod audit;
 mod awake;
 mod backtest;
+mod calendar;
 mod commands;
 mod config;
 mod features;
