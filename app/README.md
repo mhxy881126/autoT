@@ -3,9 +3,9 @@
 Tauri 2（Rust）+ Vue 3 + TypeScript + Pinia + ECharts。
 一套代码面向 Windows x64 与 macOS（Apple Silicon / Intel 通用二进制）。
 
-> 当前是 **D1–D3 增量**：前端工作台完整可用；Rust 侧行情骨架 + SQLite 账本 + 回填幂等，
-> 已在 Windows MSVC 与 macOS arm64 双平台通过 `cargo test` / `cargo check`。
-> 分时序列与信号引擎尚未接入。
+> 当前是 **D1–D4 增量**：前端工作台完整可用；Rust 侧行情骨架、SQLite 账本、分时缓存与 regime 已接入，
+> 并在 Windows MSVC 与 macOS arm64 双平台通过 `cargo test` / `cargo check`。
+> 信号引擎尚未接入（D5–D6）。
 
 ![工作台](./shot.png)
 
@@ -40,6 +40,7 @@ pnpm tauri dev
 | Rust 行情骨架 | ✅ CI 通过 | Windows MSVC + macOS arm64 `cargo check` 通过 |
 | SQLite 账本 | ✅ CI 通过 | `store.rs` + `ledger.rs`，5 个单测全绿（幂等/自然键/内容冲突/非法输入/汇总） |
 | 回填幂等 | ✅ CI 通过 | `submit_fill` 双唯一键；前端回填表单已接通 |
+| 分时链路 | ⚠️ 待 CI | Rust 拉 242 点 → SQLite 缓存 → 特征/regime → `bootstrap` 直出图表 |
 | CI 编译门 | ✅ 全绿 | [run 39237722576](https://github.com/mhxy881126/autoT/actions/runs/39237722576) |
 | 安装包 / macOS 产物 | ❌ 未产出 | 需 Windows MSVC 与 macOS + Xcode，见根目录技术方案 §7 |
 
@@ -106,8 +107,8 @@ app/
 | 天 | 任务 | 状态 |
 |---|---|---|
 | D3 | SQLite 迁移 + `submit_fill` 幂等 + 账本 | ✅ CI 通过（5 单测） |
-| D4 | 分时落盘 + `series` 命令 + 图表切实时 | 待做 |
-| D5 | Rust 特征 + regime + `market:tick` 全字段 | 待做 |
+| D4 | 分时落盘 + `series` 命令 + 图表切实时 | 代码完成，待 CI |
+| D5 | Rust 特征 + regime + `market:tick` 全字段 | 下一步 |
 | D6 | 信号引擎 + 否决理由落库 | 待做 |
 | D7 | T 对配对 + 未闭环识别 | 待做 |
 | D8 | 交割单导入 + 对账 | 待做 |
@@ -116,6 +117,7 @@ app/
 
 ## 已知问题
 
+- **tick 的 regime 每 60 秒才刷新一次**：分时缓存按分钟重算，3 秒 tick 只更新价格与 z；D5 会把 regime 跟到分钟级。
 - **修改成交只能新增、不能改。** 同一 `clientId` 内容变化会显式报错，需走冲正（red 单）；`amend_fill` 与审计链在 D7 与配对一起做。
 - `src-tauri/icons/` 缺 `icon.icns`；macOS 打包前需在 macOS 上执行 `pnpm tauri icon icons/icon.png`。
 - Tauri 模式没有单实例插件，先开两个窗口会重复轮询（P3 加 `tauri-plugin-single-instance`）。

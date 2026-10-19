@@ -2,6 +2,8 @@ use std::sync::Mutex;
 
 use rusqlite::Connection;
 
+use crate::features::Bar;
+
 #[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FeedStatus {
@@ -11,9 +13,17 @@ pub struct FeedStatus {
     pub last_error: Option<String>,
 }
 
+#[derive(Clone)]
+pub struct SeriesCache {
+    pub day: String,
+    pub prev_close: f64,
+    pub bars: Vec<Bar>,
+}
+
 pub struct AppState {
     pub client: reqwest::Client,
     pub symbol: Mutex<String>,
     pub feed: Mutex<FeedStatus>,
     pub db: Mutex<Connection>,
+    pub series: Mutex<Option<SeriesCache>>,
 }

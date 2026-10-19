@@ -1,4 +1,5 @@
 mod commands;
+mod features;
 mod ledger;
 mod market;
 mod session;
@@ -6,11 +7,11 @@ mod state;
 mod store;
 
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tauri::{Emitter, Manager};
 
-use state::{AppState, FeedStatus};
+use state::{AppState, FeedStatus, SeriesCache};
 
 pub fn run() {
     tauri::Builder::default()
@@ -20,7 +21,9 @@ pub fn run() {
             commands::feed_status,
             commands::submit_fill,
             commands::list_fills,
-            commands::ledger_day
+            commands::ledger_day,
+            commands::bootstrap,
+            commands::series
         ])
         .setup(|app| {
             let dir = app.path().app_data_dir().expect("app data dir");
@@ -37,6 +40,7 @@ pub fn run() {
                     last_error: None,
                 }),
                 db: Mutex::new(conn),
+                series: Mutex::new(None),
             });
 
             let handle = app.handle().clone();
@@ -44,6 +48,8 @@ pub fn run() {
             // 行情时钟在 Rust，不在 WebView。
             // 窗口最小化/失焦时 WebView 定时器会被节流，这条链路不受影响。
             tauri::async_runtime::spawn(async move {
+                let mut last_refresh = Instant::now() - Duration::from_secs(120);
+
                 loop {
                     if session::is_trading_time(&session::now_cn()) {
                         let (symbol, client) = {
@@ -56,15 +62,87 @@ pub fn run() {
                             (symbol, st.client.clone())
                         };
 
-                        let started = std::time::Instant::now();
+                        // 每 60 秒刷新分时缓存：特征是派生值，始终从原始分钟重算。
+                        if last_refresh.elapsed() >= Duration::from_secs(60) {
+                            last_refresh = Instant::now();
+                            if let Ok((day, raw)) = market::fetch_minute(&client, &symbol).await {
+                                if !raw.is_empty() {
+                                    let prev_close = {
+                                        let st = handle.state::<AppState>();
+                                        st.series
+                                            .lock()
+                                            .ok()
+                                            .and_then(|c| c.as_ref().map(|s| s.prev_close))
+                                    };
+                                    if let Some(pc) = prev_close {
+                                        let bars = features::build(&raw, pc);
+                                        if let Ok(mut conn) = handle.state::<AppState>().db.lock() {
+                                            let _ = store::save_minutes(&mut conn, &day, &raw);
+                                        }
+                                        if let Ok(mut cache) =
+                                            handle.state::<AppState>().series.lock()
+                                        {
+                                            *cache = Some(SeriesCache {
+                                                day,
+                                                prev_close: pc,
+                                                bars,
+                                            });
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        let started = Instant::now();
                         match market::fetch_quote(&client, &symbol).await {
                             Ok(q) => {
+                                let (avg, vwap, sigma, slope, vol_ratio, regime) = {
+                                    let st = handle.state::<AppState>();
+                                    let guard = st.series.lock().ok();
+                                    let last = guard
+                                        .as_ref()
+                                        .and_then(|g| g.as_ref())
+                                        .and_then(|c| c.bars.last());
+                                    match last {
+                                        Some(b) => (
+                                            b.avg,
+                                            b.vwap,
+                                            b.sigma,
+                                            b.slope,
+                                            b.vol_ratio,
+                                            b.regime.clone(),
+                                        ),
+                                        None => {
+                                            (q.price, q.price, 0.0008, 0.0, 1.0, "震荡".to_string())
+                                        }
+                                    }
+                                };
+
+                                let latency = started.elapsed().as_millis() as u64;
+                                let z = if vwap > 0.0 {
+                                    (q.price / vwap - 1.0) / sigma.max(0.0008)
+                                } else {
+                                    0.0
+                                };
+
+                                let snap = market::Snapshot {
+                                    t: market::clock(&q.time),
+                                    price: q.price,
+                                    avg,
+                                    vwap,
+                                    z,
+                                    slope,
+                                    vol_ratio,
+                                    regime,
+                                    latency_ms: latency,
+                                };
+
                                 if let Ok(mut feed) = handle.state::<AppState>().feed.lock() {
                                     feed.connected = true;
-                                    feed.latency_ms = started.elapsed().as_millis() as u64;
+                                    feed.latency_ms = latency;
                                     feed.last_error = None;
                                 }
-                                let _ = handle.emit("market:tick", &q);
+                                let _ = handle.emit("market:tick", &snap);
                             }
                             Err(err) => {
                                 if let Ok(mut feed) = handle.state::<AppState>().feed.lock() {

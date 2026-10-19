@@ -87,7 +87,7 @@ onMounted(() => {
         <section class="panel">
           <div class="panel-head">
             <span class="t">分时 · 1 分钟</span>
-            <span class="sub">背离 / 回归 / 否决标记 · {{ store.mode === "live" ? "Rust 行情 · 图表为回放" : "回放" }}</span>
+            <span class="sub">背离 / 回归 / 否决标记 · {{ store.mode === "live" ? "Rust 实时" : "回放" }}</span>
             <div class="legend">
               <span><i style="background:#dbe2ee"></i>价格</span>
               <span><i style="background:#e8b339"></i>均价</span>
@@ -123,7 +123,7 @@ onMounted(() => {
     </main>
 
     <footer class="statusbar">
-      <span>模式：<span class="ok">{{ store.mode === "live" ? "半自动 · Rust 行情（图表仍为回放）" : "半自动 · 浏览器回放" }}</span></span>
+      <span>模式：<span class="ok">{{ store.mode === "live" ? "半自动 · Rust 实时" : "半自动 · 浏览器回放" }}</span></span>
       <span>今日 T：<span>{{ payload.stats.filled }}</span> / 4</span>
       <span>连亏：0</span>
       <span>报撤速率：0 笔/秒（监管线 300）</span>

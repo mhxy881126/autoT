@@ -1,8 +1,12 @@
 use serde::Serialize;
+use serde_json::json;
 
+use crate::features::{self, Bar};
 use crate::ledger::{self, Fill, FillInput, LedgerDay};
-use crate::market::{self, Quote};
-use crate::state::{AppState, FeedStatus};
+use crate::market::{self, DayBar, Quote};
+use crate::session;
+use crate::state::{AppState, FeedStatus, SeriesCache};
+use crate::store;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -54,4 +58,177 @@ pub fn list_fills(state: tauri::State<'_, AppState>, day: String) -> Result<Vec<
 pub fn ledger_day(state: tauri::State<'_, AppState>, day: String) -> Result<LedgerDay, String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     ledger::day(&conn, &day)
+}
+
+fn fmt_day(d: &str) -> String {
+    if d.len() == 8 {
+        format!("{}-{}-{}", &d[..4], &d[4..6], &d[6..])
+    } else {
+        d.to_string()
+    }
+}
+
+fn moving_avg(daily: &[DayBar], i: usize, n: usize) -> Option<f64> {
+    if i + 1 >= n {
+        let sum: f64 = daily[i + 1 - n..=i].iter().map(|x| x.c).sum();
+        Some(sum / n as f64)
+    } else {
+        None
+    }
+}
+
+fn build_kline(daily: &[DayBar]) -> Vec<serde_json::Value> {
+    let start = daily.len().saturating_sub(60);
+    (start..daily.len())
+        .map(|i| {
+            json!({
+                "d": daily[i].d,
+                "o": daily[i].o,
+                "c": daily[i].c,
+                "h": daily[i].h,
+                "l": daily[i].l,
+                "v": daily[i].v,
+                "ma5": moving_avg(daily, i, 5),
+                "ma10": moving_avg(daily, i, 10),
+                "ma20": moving_avg(daily, i, 20)
+            })
+        })
+        .collect()
+}
+
+/// 启动时拉一次全量：快照 + 分时 + 日K，组装成前端直接可渲染的 DeskPayload。
+#[tauri::command]
+pub async fn bootstrap(state: tauri::State<'_, AppState>) -> Result<serde_json::Value, String> {
+    let symbol = state.symbol.lock().map_err(|e| e.to_string())?.clone();
+    let quote = market::fetch_quote(&state.client, &symbol).await?;
+    let (day, raw) = market::fetch_minute(&state.client, &symbol).await?;
+    if raw.is_empty() {
+        return Err("分时数据为空（可能非交易日）".to_string());
+    }
+
+    {
+        let mut conn = state.db.lock().map_err(|e| e.to_string())?;
+        let _ = store::save_minutes(&mut conn, &day, &raw);
+    }
+
+    let bars = features::build(&raw, quote.prev_close);
+    {
+        let mut cache = state.series.lock().map_err(|e| e.to_string())?;
+        *cache = Some(SeriesCache {
+            day: day.clone(),
+            prev_close: quote.prev_close,
+            bars: bars.clone(),
+        });
+    }
+
+    let daily = market::fetch_daily(&state.client, &symbol, 120).await?;
+    let kline = build_kline(&daily);
+
+    let atr_pct = if daily.len() > 2 && quote.prev_close > 0.0 {
+        features::atr(&daily[..daily.len() - 1], 14) / quote.prev_close
+    } else {
+        0.0
+    };
+
+    let base_cost = if daily.len() >= 20 {
+        daily[daily.len() - 20..].iter().map(|d| d.c).sum::<f64>() / 20.0
+    } else {
+        quote.prev_close
+    };
+
+    let last = match bars.last() {
+        Some(b) => json!({
+            "t": b.t, "regime": b.regime, "z": b.z,
+            "price": b.price, "vwap": b.vwap, "slope": b.slope
+        }),
+        None => json!({
+            "t": "--:--", "regime": "震荡", "z": 0.0,
+            "price": quote.price, "vwap": quote.price, "slope": 0.0
+        }),
+    };
+
+    let code = symbol.get(2..).unwrap_or("").to_string();
+    let market = symbol.get(..2).unwrap_or("").to_uppercase();
+
+    Ok(json!({
+        "meta": {
+            "symbol": quote.name,
+            "code": code,
+            "market": market,
+            "date": fmt_day(&day),
+            "prevClose": quote.prev_close,
+            "open": quote.open,
+            "high": quote.high,
+            "low": quote.low,
+            "close": quote.price,
+            "atrPct": atr_pct,
+            "generatedAt": session::now_cn().format("%Y-%m-%d %H:%M:%S").to_string(),
+            "mode": "live",
+            "conclusion": "分时与 regime 由 Rust 计算；信号引擎在 D5–D6 接入。"
+        },
+        "account": {
+            "baseQty": 1000,
+            "baseCost": base_cost,
+            "available": 1000,
+            "cash": 800000.0,
+            "lot": 200,
+            "maxTRatio": 0.5
+        },
+        "minutes": bars,
+        "kline": kline,
+        "signals": [],
+        "trades": [],
+        "equity": [],
+        "stats": {
+            "candidates": 0, "accepted": 0, "filled": 0, "wins": 0, "losses": 0,
+            "winRate": 0.0, "avgNetPct": 0.0, "avgWin": 0.0, "avgLoss": 0.0,
+            "totalNet": 0.0, "totalCost": 0.0, "totalGross": 0.0,
+            "costRatio": null, "maxDd": 0.0, "vetoReasons": {}
+        },
+        "scenarios": [],
+        "sensitivity": [],
+        "last": last
+    }))
+}
+
+/// 取某日分时（带内存缓存与 SQLite 落盘）。day 为空时取当日。
+#[tauri::command]
+pub async fn series(
+    state: tauri::State<'_, AppState>,
+    day: Option<String>,
+) -> Result<Vec<Bar>, String> {
+    {
+        let cache = state.series.lock().map_err(|e| e.to_string())?;
+        if let Some(c) = cache.as_ref() {
+            let hit = day
+                .as_deref()
+                .map_or(true, |d| d == c.day || d == fmt_day(&c.day));
+            if hit {
+                return Ok(c.bars.clone());
+            }
+        }
+    }
+
+    let symbol = state.symbol.lock().map_err(|e| e.to_string())?.clone();
+    let quote = market::fetch_quote(&state.client, &symbol).await?;
+    let (d, raw) = market::fetch_minute(&state.client, &symbol).await?;
+    if raw.is_empty() {
+        return Err("分时数据为空".to_string());
+    }
+
+    {
+        let mut conn = state.db.lock().map_err(|e| e.to_string())?;
+        let _ = store::save_minutes(&mut conn, &d, &raw);
+    }
+
+    let bars = features::build(&raw, quote.prev_close);
+    {
+        let mut cache = state.series.lock().map_err(|e| e.to_string())?;
+        *cache = Some(SeriesCache {
+            day: d,
+            prev_close: quote.prev_close,
+            bars: bars.clone(),
+        });
+    }
+    Ok(bars)
 }
