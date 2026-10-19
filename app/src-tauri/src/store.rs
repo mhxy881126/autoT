@@ -12,6 +12,19 @@ pub fn open(path: &Path) -> Result<Connection, String> {
         .map_err(|e| format!("初始化数据库失败: {e}"))?;
     // 兼容早期库：CREATE TABLE IF NOT EXISTS 不会补列。
     let _ = conn.execute_batch("ALTER TABLE fills ADD COLUMN voided INTEGER NOT NULL DEFAULT 0");
+    let _ = conn.execute_batch("ALTER TABLE fills ADD COLUMN symbol TEXT NOT NULL DEFAULT ''");
+    let _ = conn.execute_batch("ALTER TABLE t_pairs ADD COLUMN symbol TEXT NOT NULL DEFAULT ''");
+    // 唯一键/索引升级为含 symbol（旧库同样重建）。
+    let _ = conn.execute_batch(
+        "DROP INDEX IF EXISTS uq_fills_active;
+         DROP INDEX IF EXISTS idx_fills_day;
+         DROP INDEX IF EXISTS idx_pairs_day;
+         CREATE UNIQUE INDEX IF NOT EXISTS uq_fills_active
+           ON fills (symbol, trade_day, ts, side, price_cents, qty)
+           WHERE voided = 0;
+         CREATE INDEX IF NOT EXISTS idx_fills_day ON fills (symbol, trade_day, ts);
+         CREATE INDEX IF NOT EXISTS idx_pairs_day ON t_pairs (trade_day, symbol, status);",
+    );
     Ok(conn)
 }
 

@@ -68,6 +68,7 @@ export interface Signal {
 
 export interface FillInput {
   clientId: string;   // UUID，幂等键
+  symbol: string;     // "sh600519"，多票账务隔离
   day: string;        // trade_day，Asia/Shanghai
   t: string;
   side: FillSide;
@@ -89,6 +90,7 @@ export interface Fill extends FillInput {
 export interface TPair {
   id: number;
   day: string;
+  symbol: string;
   side: TSide;
   openFillId: number;
   closeFillId: number | null;
@@ -110,6 +112,7 @@ export interface Position {
 
 export interface LedgerDay {
   day: string;
+  symbol: string;
   position: Position;
   fills: Fill[];
   pairs: TPair[];

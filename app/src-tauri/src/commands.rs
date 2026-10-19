@@ -61,26 +61,36 @@ pub fn void_fill(state: tauri::State<'_, AppState>, id: i64) -> Result<(), Strin
 }
 
 #[tauri::command]
-pub fn list_fills(state: tauri::State<'_, AppState>, day: String) -> Result<Vec<Fill>, String> {
+pub fn list_fills(
+    state: tauri::State<'_, AppState>,
+    day: String,
+    symbol: String,
+) -> Result<Vec<Fill>, String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
-    ledger::list_by_day(&conn, &day)
+    ledger::list_by_day(&conn, &day, &symbol)
 }
 
 #[tauri::command]
-pub fn ledger_day(state: tauri::State<'_, AppState>, day: String) -> Result<LedgerDay, String> {
+pub fn ledger_day(
+    state: tauri::State<'_, AppState>,
+    day: String,
+    symbol: String,
+) -> Result<LedgerDay, String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
-    ledger::day(&conn, &day, 1000, 0.0)
+    let cfg = config::load_for(&conn, &symbol);
+    ledger::day(&conn, &day, &symbol, cfg.base_qty, cfg.base_cost)
 }
 
 #[tauri::command]
 pub fn import_statement(
     state: tauri::State<'_, AppState>,
     day: String,
+    symbol: String,
     file_name: String,
     bytes: Vec<u8>,
 ) -> Result<ImportResult, String> {
     let mut conn = state.db.lock().map_err(|e| e.to_string())?;
-    statement::import(&mut conn, &day, &file_name, &bytes)
+    statement::import(&mut conn, &day, &symbol, &file_name, &bytes)
 }
 
 pub(crate) fn fmt_day(d: &str) -> String {
@@ -222,6 +232,7 @@ pub async fn bootstrap(state: tauri::State<'_, AppState>) -> Result<serde_json::
     Ok(json!({
         "meta": {
             "symbol": quote.name,
+            "symbolId": symbol,
             "code": code,
             "market": market_code,
             "date": day_fmt,
@@ -404,9 +415,7 @@ pub fn remove_symbol(state: tauri::State<'_, AppState>, symbol: String) -> Resul
 }
 
 #[tauri::command]
-pub async fn list_watchlist(
-    state: tauri::State<'_, AppState>,
-) -> Result<Vec<WatchItem>, String> {
+pub async fn list_watchlist(state: tauri::State<'_, AppState>) -> Result<Vec<WatchItem>, String> {
     let (symbols, meta) = {
         let conn = state.db.lock().map_err(|e| e.to_string())?;
         let symbols = config::list(&conn)?;

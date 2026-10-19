@@ -32,6 +32,7 @@ async function record(): Promise<void> {
   try {
     const fill = await store.submitFill({
       clientId: newId(),
+      symbol: store.config?.symbol ?? props.payload.meta.symbolId,
       day: props.payload.meta.date,
       t: form.t,
       side: form.side,

@@ -4,6 +4,7 @@ import type { KLine, MinuteBar, Signal, Snapshot } from "../../../contracts/ipc"
 
 export interface DeskMeta {
   symbol: string;
+  symbolId: string;
   code: string;
   market: string;
   date: string;

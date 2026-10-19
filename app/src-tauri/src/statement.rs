@@ -164,6 +164,7 @@ fn parse(text: &str) -> (Vec<ParsedRow>, Vec<String>, i64) {
 pub fn import(
     conn: &mut Connection,
     day: &str,
+    symbol: &str,
     file_name: &str,
     bytes: &[u8],
 ) -> Result<ImportResult, String> {
@@ -171,7 +172,7 @@ pub fn import(
     let (rows, errors, total) = parse(&text);
 
     // 对账：手工录入但不在交割单里的成交，必须显式暴露。
-    let existing = ledger::list_by_day(conn, day)?;
+    let existing = ledger::list_by_day(conn, day, symbol)?;
     let statement_keys: HashSet<(String, String, i64, i64)> = rows
         .iter()
         .map(|r| {
@@ -207,9 +208,10 @@ pub fn import(
         let price_cents = (row.price * 100.0).round() as i64;
         let input = FillInput {
             client_id: format!(
-                "imp:{day}:{}:{}:{}:{}",
+                "imp:{symbol}:{day}:{}:{}:{}:{}",
                 row.t, row.side, price_cents, row.qty
             ),
+            symbol: symbol.to_string(),
             day: day.to_string(),
             t: row.t.clone(),
             side: row.side.clone(),
@@ -226,7 +228,7 @@ pub fn import(
         }
     }
 
-    ledger::rebuild(&tx, day)?;
+    ledger::rebuild(&tx, day, symbol)?;
 
     let mut hasher = DefaultHasher::new();
     bytes.hash(&mut hasher);
@@ -316,6 +318,7 @@ mod tests {
 
         let manual = FillInput {
             client_id: "manual-1".to_string(),
+            symbol: "sh600519".to_string(),
             day: "2026-10-19".to_string(),
             t: "09:40".to_string(),
             side: "BUY".to_string(),
@@ -328,7 +331,8 @@ mod tests {
         ledger::submit(&mut c, &manual).expect("manual fill");
 
         let csv = "时间,方向,价格,数量\n10:00,卖出,101,100\n";
-        let result = import(&mut c, "2026-10-19", "s.csv", csv.as_bytes()).expect("import");
+        let result =
+            import(&mut c, "2026-10-19", "sh600519", "s.csv", csv.as_bytes()).expect("import");
         assert_eq!(result.manual_only, 1);
         assert!(result.message.contains("不在交割单中"));
     }

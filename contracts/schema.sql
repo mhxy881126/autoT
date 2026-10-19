@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS symbol_configs (
 CREATE TABLE IF NOT EXISTS fills (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   client_id   TEXT    NOT NULL UNIQUE,             -- 幂等键（UUID）
+  symbol      TEXT    NOT NULL,                    -- "sh600519"，多票账务隔离
   trade_day   TEXT    NOT NULL,
   ts          TEXT    NOT NULL,                    -- "HH:MM"
   side        TEXT    NOT NULL CHECK (side IN ('BUY','SELL')),
@@ -39,10 +40,10 @@ CREATE TABLE IF NOT EXISTS fills (
 
 -- 只对未冲正的成交做自然键去重：冲正后允许用正确内容重新录入。
 CREATE UNIQUE INDEX IF NOT EXISTS uq_fills_active
-  ON fills (trade_day, ts, side, price_cents, qty)
+  ON fills (symbol, trade_day, ts, side, price_cents, qty)
   WHERE voided = 0;
 
-CREATE INDEX IF NOT EXISTS idx_fills_day ON fills (trade_day, ts);
+CREATE INDEX IF NOT EXISTS idx_fills_day ON fills (symbol, trade_day, ts);
 
 -- D4：原始分时缓存。存原始累计量，特征始终由代码重算，避免缓存派生值后口径漂移。
 CREATE TABLE IF NOT EXISTS minute_raw (
@@ -58,6 +59,7 @@ CREATE TABLE IF NOT EXISTS minute_raw (
 CREATE TABLE IF NOT EXISTS t_pairs (
   id             INTEGER PRIMARY KEY AUTOINCREMENT,
   trade_day      TEXT    NOT NULL,
+  symbol         TEXT    NOT NULL,                 -- 与 fills.symbol 对齐
   side           TEXT    NOT NULL CHECK (side IN ('正T','倒T')),
   open_fill_id   INTEGER NOT NULL REFERENCES fills(id),
   close_fill_id  INTEGER          REFERENCES fills(id),
@@ -70,7 +72,7 @@ CREATE TABLE IF NOT EXISTS t_pairs (
   closed_at      TEXT
 );
 
-CREATE INDEX IF NOT EXISTS idx_pairs_day ON t_pairs (trade_day, status);
+CREATE INDEX IF NOT EXISTS idx_pairs_day ON t_pairs (trade_day, symbol, status);
 
 -- 信号与否决理由：没有这张表，就无法复盘"为什么没做"
 CREATE TABLE IF NOT EXISTS signals (

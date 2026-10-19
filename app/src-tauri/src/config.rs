@@ -70,11 +70,7 @@ pub fn save(conn: &Connection, cfg: &StrategyConfig) -> Result<(), String> {
          ON CONFLICT(symbol) DO UPDATE SET
            config_json = excluded.config_json,
            updated_at = excluded.updated_at",
-        params![
-            &cfg.symbol,
-            text,
-            chrono::Utc::now().to_rfc3339()
-        ],
+        params![&cfg.symbol, text, chrono::Utc::now().to_rfc3339()],
     )
     .map_err(|e| format!("保存配置失败: {e}"))?;
     Ok(())

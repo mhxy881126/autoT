@@ -12,6 +12,7 @@ pub const SLIP_PER_LEG: f64 = 0.0002;
 pub struct Fill {
     pub id: i64,
     pub client_id: String,
+    pub symbol: String,
     pub day: String,
     pub t: String,
     pub side: String,
@@ -29,6 +30,7 @@ pub struct Fill {
 #[serde(rename_all = "camelCase")]
 pub struct FillInput {
     pub client_id: String,
+    pub symbol: String,
     pub day: String,
     pub t: String,
     pub side: String,
@@ -47,6 +49,7 @@ pub struct FillInput {
 pub struct TradePair {
     pub id: i64,
     pub day: String,
+    pub symbol: String,
     pub side: String,
     pub open_fill_id: i64,
     pub close_fill_id: Option<i64>,
@@ -72,6 +75,7 @@ pub struct Position {
 #[serde(rename_all = "camelCase")]
 pub struct LedgerDay {
     pub day: String,
+    pub symbol: String,
     pub position: Position,
     pub fills: Vec<Fill>,
     pub pairs: Vec<TradePair>,
@@ -80,23 +84,24 @@ pub struct LedgerDay {
     pub unresolved: i64,
 }
 
-const SELECT: &str = "SELECT id, client_id, trade_day, ts, side, price_cents, qty, fee_cents, signal_id, source, note, created_at, voided FROM fills";
+const SELECT: &str = "SELECT id, client_id, symbol, trade_day, ts, side, price_cents, qty, fee_cents, signal_id, source, note, created_at, voided FROM fills";
 
 fn map_fill(row: &rusqlite::Row<'_>) -> rusqlite::Result<Fill> {
     Ok(Fill {
         id: row.get(0)?,
         client_id: row.get(1)?,
-        day: row.get(2)?,
-        t: row.get(3)?,
-        side: row.get(4)?,
-        price: row.get::<_, i64>(5)? as f64 / 100.0,
-        qty: row.get(6)?,
-        fee: row.get::<_, i64>(7)? as f64 / 100.0,
-        signal_id: row.get(8)?,
-        source: row.get(9)?,
-        note: row.get(10)?,
-        created_at: row.get(11)?,
-        voided: row.get::<_, i64>(12)? != 0,
+        symbol: row.get(2)?,
+        day: row.get(3)?,
+        t: row.get(4)?,
+        side: row.get(5)?,
+        price: row.get::<_, i64>(6)? as f64 / 100.0,
+        qty: row.get(7)?,
+        fee: row.get::<_, i64>(8)? as f64 / 100.0,
+        signal_id: row.get(9)?,
+        source: row.get(10)?,
+        note: row.get(11)?,
+        created_at: row.get(12)?,
+        voided: row.get::<_, i64>(13)? != 0,
     })
 }
 
@@ -124,7 +129,8 @@ fn find_existing(
         if fill.voided {
             return Err("该 clientId 已冲正，不能复用".to_string());
         }
-        let same_content = fill.day == input.day
+        let same_content = fill.symbol == input.symbol
+            && fill.day == input.day
             && fill.t == input.t
             && fill.side == input.side
             && ((fill.price * 100.0).round() as i64) == price_cents
@@ -139,9 +145,16 @@ fn find_existing(
     let by_natural = conn
         .query_row(
             &format!(
-                "{SELECT} WHERE trade_day = ?1 AND ts = ?2 AND side = ?3 AND price_cents = ?4 AND qty = ?5 AND voided = 0"
+                "{SELECT} WHERE symbol = ?1 AND trade_day = ?2 AND ts = ?3 AND side = ?4 AND price_cents = ?5 AND qty = ?6 AND voided = 0"
             ),
-            params![&input.day, &input.t, &input.side, price_cents, input.qty],
+            params![
+                &input.symbol,
+                &input.day,
+                &input.t,
+                &input.side,
+                price_cents,
+                input.qty
+            ],
             map_fill,
         )
         .optional()
@@ -156,8 +169,11 @@ fn find_existing(
     Ok(None)
 }
 
-/// 回填成交。幂等 + 当日全量重配对（增量配对在乱序回填时会错）。
+/// 回填成交。幂等 + 当日该标的全量重配对（增量配对在乱序回填时会错）。
 pub fn submit(conn: &mut Connection, input: &FillInput) -> Result<Fill, String> {
+    if input.symbol.trim().is_empty() {
+        return Err("缺少标的代码".to_string());
+    }
     if input.qty <= 0 {
         return Err("数量必须大于 0".to_string());
     }
@@ -182,10 +198,11 @@ pub fn submit(conn: &mut Connection, input: &FillInput) -> Result<Fill, String> 
 
     tx.execute(
         "INSERT INTO fills
-         (client_id, trade_day, ts, side, price_cents, qty, fee_cents, signal_id, source, note, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'manual', ?9, ?10)",
+         (client_id, symbol, trade_day, ts, side, price_cents, qty, fee_cents, signal_id, source, note, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'manual', ?10, ?11)",
         params![
             &input.client_id,
+            &input.symbol,
             &input.day,
             &input.t,
             &input.side,
@@ -200,38 +217,40 @@ pub fn submit(conn: &mut Connection, input: &FillInput) -> Result<Fill, String> 
     .map_err(|e| format!("写入成交失败: {e}"))?;
 
     let id = tx.last_insert_rowid();
-    rebuild_pairs(&tx, &input.day)?;
+    rebuild_pairs(&tx, &input.day, &input.symbol)?;
     tx.commit().map_err(|e| format!("提交成交失败: {e}"))?;
 
     get_fill(conn, id)
 }
 
-/// 冲正：作废成交并重放当日配对。修改成交只能走这里，保留审计链。
+/// 冲正：作废成交并重放当日该标的的配对。修改成交只能走这里，保留审计链。
 pub fn void_fill(conn: &mut Connection, id: i64) -> Result<(), String> {
     let tx = conn
         .transaction()
         .map_err(|e| format!("开启冲正事务失败: {e}"))?;
 
-    let day: String = tx
+    let (day, symbol): (String, String) = tx
         .query_row(
-            "SELECT trade_day FROM fills WHERE id = ?1",
+            "SELECT trade_day, symbol FROM fills WHERE id = ?1",
             params![id],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .map_err(|_| format!("成交不存在: {id}"))?;
 
     tx.execute("UPDATE fills SET voided = 1 WHERE id = ?1", params![id])
         .map_err(|e| format!("冲正失败: {e}"))?;
-    rebuild_pairs(&tx, &day)?;
+    rebuild_pairs(&tx, &day, &symbol)?;
     tx.commit().map_err(|e| format!("提交冲正失败: {e}"))
 }
 
-pub fn list_by_day(conn: &Connection, day: &str) -> Result<Vec<Fill>, String> {
+pub fn list_by_day(conn: &Connection, day: &str, symbol: &str) -> Result<Vec<Fill>, String> {
     let mut stmt = conn
-        .prepare(&format!("{SELECT} WHERE trade_day = ?1 ORDER BY ts, id"))
+        .prepare(&format!(
+            "{SELECT} WHERE trade_day = ?1 AND symbol = ?2 ORDER BY ts, id"
+        ))
         .map_err(|e| e.to_string())?;
     let rows = stmt
-        .query_map(params![day], map_fill)
+        .query_map(params![day, symbol], map_fill)
         .map_err(|e| e.to_string())?;
 
     let mut out = Vec::new();
@@ -241,31 +260,32 @@ pub fn list_by_day(conn: &Connection, day: &str) -> Result<Vec<Fill>, String> {
     Ok(out)
 }
 
-pub fn list_pairs(conn: &Connection, day: &str) -> Result<Vec<TradePair>, String> {
+pub fn list_pairs(conn: &Connection, day: &str, symbol: &str) -> Result<Vec<TradePair>, String> {
     let mut stmt = conn
         .prepare(
-            "SELECT id, trade_day, side, open_fill_id, close_fill_id, qty,
+            "SELECT id, trade_day, symbol, side, open_fill_id, close_fill_id, qty,
                     gross_cents, cost_cents, net_cents, status
-             FROM t_pairs WHERE trade_day = ?1 ORDER BY id",
+             FROM t_pairs WHERE trade_day = ?1 AND symbol = ?2 ORDER BY id",
         )
         .map_err(|e| e.to_string())?;
 
     let rows = stmt
-        .query_map(params![day], |row| {
-            let gross: Option<i64> = row.get(6)?;
-            let cost: Option<i64> = row.get(7)?;
-            let net: Option<i64> = row.get(8)?;
+        .query_map(params![day, symbol], |row| {
+            let gross: Option<i64> = row.get(7)?;
+            let cost: Option<i64> = row.get(8)?;
+            let net: Option<i64> = row.get(9)?;
             Ok(TradePair {
                 id: row.get(0)?,
                 day: row.get(1)?,
-                side: row.get(2)?,
-                open_fill_id: row.get(3)?,
-                close_fill_id: row.get(4)?,
-                qty: row.get(5)?,
+                symbol: row.get(2)?,
+                side: row.get(3)?,
+                open_fill_id: row.get(4)?,
+                close_fill_id: row.get(5)?,
+                qty: row.get(6)?,
                 gross: gross.map(|v| v as f64 / 100.0),
                 cost: cost.map(|v| v as f64 / 100.0),
                 net: net.map(|v| v as f64 / 100.0),
-                status: row.get(9)?,
+                status: row.get(10)?,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -299,16 +319,16 @@ struct PairRow {
     closed_at: Option<String>,
 }
 
-/// 删除当日配对，按成交时间重放。FIFO：新成交优先平掉最早的反向未平腿。
-fn rebuild_pairs(conn: &Connection, day: &str) -> Result<(), String> {
+/// 删除当日该标的的配对，按成交时间重放。FIFO：新成交优先平掉最早的反向未平腿。
+fn rebuild_pairs(conn: &Connection, day: &str, symbol: &str) -> Result<(), String> {
     let fills: Vec<Fill> = {
         let mut stmt = conn
             .prepare(&format!(
-                "{SELECT} WHERE trade_day = ?1 AND voided = 0 ORDER BY ts, id"
+                "{SELECT} WHERE trade_day = ?1 AND symbol = ?2 AND voided = 0 ORDER BY ts, id"
             ))
             .map_err(|e| e.to_string())?;
         let rows = stmt
-            .query_map(params![day], map_fill)
+            .query_map(params![day, symbol], map_fill)
             .map_err(|e| e.to_string())?;
         let mut out = Vec::new();
         for row in rows {
@@ -317,8 +337,11 @@ fn rebuild_pairs(conn: &Connection, day: &str) -> Result<(), String> {
         out
     };
 
-    conn.execute("DELETE FROM t_pairs WHERE trade_day = ?1", params![day])
-        .map_err(|e| format!("清理配对失败: {e}"))?;
+    conn.execute(
+        "DELETE FROM t_pairs WHERE trade_day = ?1 AND symbol = ?2",
+        params![day, symbol],
+    )
+    .map_err(|e| format!("清理配对失败: {e}"))?;
 
     let mut open: VecDeque<Leg> = VecDeque::new();
     let mut pairs: Vec<PairRow> = Vec::new();
@@ -406,11 +429,12 @@ fn rebuild_pairs(conn: &Connection, day: &str) -> Result<(), String> {
     for row in pairs {
         conn.execute(
             "INSERT INTO t_pairs
-             (trade_day, side, open_fill_id, close_fill_id, qty,
+             (trade_day, symbol, side, open_fill_id, close_fill_id, qty,
               gross_cents, cost_cents, net_cents, status, opened_at, closed_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![
                 day,
+                symbol,
                 row.side,
                 row.open_fill_id,
                 row.close_fill_id,
@@ -429,14 +453,55 @@ fn rebuild_pairs(conn: &Connection, day: &str) -> Result<(), String> {
     Ok(())
 }
 
+pub fn rebuild(conn: &Connection, day: &str, symbol: &str) -> Result<(), String> {
+    rebuild_pairs(conn, day, symbol)
+}
+
+/// 交割单导入用：只插入，不重建配对；调用方在整批导入后统一 rebuild。
+pub fn insert_imported(conn: &Connection, input: &FillInput) -> Result<bool, String> {
+    if input.qty <= 0
+        || input.price <= 0.0
+        || input.symbol.trim().is_empty()
+        || (input.side != "BUY" && input.side != "SELL")
+    {
+        return Err("非法成交行".to_string());
+    }
+    let price_cents = (input.price * 100.0).round() as i64;
+    let fee_cents = (input.fee.unwrap_or(0.0) * 100.0).round() as i64;
+    let now = Utc::now().to_rfc3339();
+
+    let changed = conn
+        .execute(
+            "INSERT OR IGNORE INTO fills
+             (client_id, symbol, trade_day, ts, side, price_cents, qty, fee_cents, signal_id, source, note, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL, 'import', ?9, ?10)",
+            params![
+                &input.client_id,
+                &input.symbol,
+                &input.day,
+                &input.t,
+                &input.side,
+                price_cents,
+                input.qty,
+                fee_cents,
+                &input.note,
+                &now
+            ],
+        )
+        .map_err(|e| format!("导入成交失败: {e}"))?;
+
+    Ok(changed == 1)
+}
+
 pub fn day(
     conn: &Connection,
     day: &str,
+    symbol: &str,
     base_qty: i64,
     base_cost: f64,
 ) -> Result<LedgerDay, String> {
-    let fills = list_by_day(conn, day)?;
-    let pairs = list_pairs(conn, day)?;
+    let fills = list_by_day(conn, day, symbol)?;
+    let pairs = list_pairs(conn, day, symbol)?;
 
     let realized_cents: i64 = pairs
         .iter()
@@ -461,6 +526,7 @@ pub fn day(
 
     Ok(LedgerDay {
         day: day.to_string(),
+        symbol: symbol.to_string(),
         position: Position {
             base_qty: net_qty,
             available,
@@ -477,41 +543,6 @@ pub fn day(
     })
 }
 
-pub fn rebuild(conn: &Connection, day: &str) -> Result<(), String> {
-    rebuild_pairs(conn, day)
-}
-
-/// 交割单导入用：只插入，不重建配对；调用方在整批导入后统一 rebuild。
-pub fn insert_imported(conn: &Connection, input: &FillInput) -> Result<bool, String> {
-    if input.qty <= 0 || input.price <= 0.0 || (input.side != "BUY" && input.side != "SELL") {
-        return Err("非法成交行".to_string());
-    }
-    let price_cents = (input.price * 100.0).round() as i64;
-    let fee_cents = (input.fee.unwrap_or(0.0) * 100.0).round() as i64;
-    let now = Utc::now().to_rfc3339();
-
-    let changed = conn
-        .execute(
-            "INSERT OR IGNORE INTO fills
-             (client_id, trade_day, ts, side, price_cents, qty, fee_cents, signal_id, source, note, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, 'import', ?8, ?9)",
-            params![
-                &input.client_id,
-                &input.day,
-                &input.t,
-                &input.side,
-                price_cents,
-                input.qty,
-                fee_cents,
-                &input.note,
-                &now
-            ],
-        )
-        .map_err(|e| format!("导入成交失败: {e}"))?;
-
-    Ok(changed == 1)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -523,9 +554,10 @@ mod tests {
         c
     }
 
-    fn sample(client: &str, side: &str, price: f64, qty: i64, t: &str) -> FillInput {
+    fn sample(client: &str, symbol: &str, side: &str, price: f64, qty: i64, t: &str) -> FillInput {
         FillInput {
             client_id: client.to_string(),
+            symbol: symbol.to_string(),
             day: "2026-10-19".to_string(),
             t: t.to_string(),
             side: side.to_string(),
@@ -540,26 +572,43 @@ mod tests {
     #[test]
     fn idempotent_by_client_id() {
         let mut c = conn();
-        let a = submit(&mut c, &sample("c1", "BUY", 100.0, 100, "09:40")).expect("first");
-        let b = submit(&mut c, &sample("c1", "BUY", 100.0, 100, "09:40")).expect("second");
+        let input = sample("c1", "sh600519", "BUY", 100.0, 100, "09:40");
+        let a = submit(&mut c, &input).expect("first");
+        let b = submit(&mut c, &input).expect("second");
         assert_eq!(a.id, b.id);
-        assert_eq!(list_by_day(&c, "2026-10-19").unwrap().len(), 1);
+        assert_eq!(list_by_day(&c, "2026-10-19", "sh600519").unwrap().len(), 1);
     }
 
     #[test]
     fn conflicts_rejected() {
         let mut c = conn();
-        submit(&mut c, &sample("c1", "BUY", 100.0, 100, "09:40")).unwrap();
-        assert!(submit(&mut c, &sample("c1", "BUY", 101.0, 100, "09:40")).is_err());
+        submit(
+            &mut c,
+            &sample("c1", "sh600519", "BUY", 100.0, 100, "09:40"),
+        )
+        .unwrap();
+        assert!(submit(
+            &mut c,
+            &sample("c1", "sh600519", "BUY", 101.0, 100, "09:40")
+        )
+        .is_err());
     }
 
     #[test]
     fn buy_then_sell_closes_pair() {
         let mut c = conn();
-        submit(&mut c, &sample("b1", "BUY", 100.0, 100, "09:40")).unwrap();
-        submit(&mut c, &sample("s1", "SELL", 101.0, 100, "10:00")).unwrap();
+        submit(
+            &mut c,
+            &sample("b1", "sh600519", "BUY", 100.0, 100, "09:40"),
+        )
+        .unwrap();
+        submit(
+            &mut c,
+            &sample("s1", "sh600519", "SELL", 101.0, 100, "10:00"),
+        )
+        .unwrap();
 
-        let d = day(&c, "2026-10-19", 1000, 90.0).unwrap();
+        let d = day(&c, "2026-10-19", "sh600519", 1000, 90.0).unwrap();
         assert_eq!(d.pairs.len(), 1);
         assert_eq!(d.pairs[0].status, "CLOSED");
         assert_eq!(d.pairs[0].side, "正T");
@@ -571,11 +620,23 @@ mod tests {
     #[test]
     fn partial_fills_split_into_pairs() {
         let mut c = conn();
-        submit(&mut c, &sample("b1", "BUY", 100.0, 300, "09:40")).unwrap();
-        submit(&mut c, &sample("s1", "SELL", 101.0, 100, "10:00")).unwrap();
-        submit(&mut c, &sample("s2", "SELL", 102.0, 200, "10:30")).unwrap();
+        submit(
+            &mut c,
+            &sample("b1", "sh600519", "BUY", 100.0, 300, "09:40"),
+        )
+        .unwrap();
+        submit(
+            &mut c,
+            &sample("s1", "sh600519", "SELL", 101.0, 100, "10:00"),
+        )
+        .unwrap();
+        submit(
+            &mut c,
+            &sample("s2", "sh600519", "SELL", 102.0, 200, "10:30"),
+        )
+        .unwrap();
 
-        let d = day(&c, "2026-10-19", 1000, 90.0).unwrap();
+        let d = day(&c, "2026-10-19", "sh600519", 1000, 90.0).unwrap();
         assert_eq!(d.pairs.len(), 2);
         assert!(d.pairs.iter().all(|p| p.status == "CLOSED"));
         let total: i64 = d.pairs.iter().map(|p| p.qty).sum();
@@ -585,9 +646,13 @@ mod tests {
     #[test]
     fn unclosed_t_is_unresolved() {
         let mut c = conn();
-        submit(&mut c, &sample("b1", "BUY", 100.0, 200, "09:40")).unwrap();
+        submit(
+            &mut c,
+            &sample("b1", "sh600519", "BUY", 100.0, 200, "09:40"),
+        )
+        .unwrap();
 
-        let d = day(&c, "2026-10-19", 1000, 90.0).unwrap();
+        let d = day(&c, "2026-10-19", "sh600519", 1000, 90.0).unwrap();
         assert_eq!(d.pairs.len(), 1);
         assert_eq!(d.pairs[0].status, "OPEN");
         assert_eq!(d.unresolved, 1);
@@ -597,15 +662,52 @@ mod tests {
     #[test]
     fn void_replays_pairs() {
         let mut c = conn();
-        submit(&mut c, &sample("b1", "BUY", 100.0, 100, "09:40")).unwrap();
-        let sell = submit(&mut c, &sample("s1", "SELL", 101.0, 100, "10:00")).unwrap();
-        assert_eq!(day(&c, "2026-10-19", 1000, 90.0).unwrap().unresolved, 0);
+        submit(
+            &mut c,
+            &sample("b1", "sh600519", "BUY", 100.0, 100, "09:40"),
+        )
+        .unwrap();
+        let sell = submit(
+            &mut c,
+            &sample("s1", "sh600519", "SELL", 101.0, 100, "10:00"),
+        )
+        .unwrap();
+        assert_eq!(
+            day(&c, "2026-10-19", "sh600519", 1000, 90.0)
+                .unwrap()
+                .unresolved,
+            0
+        );
 
         void_fill(&mut c, sell.id).unwrap();
-        let d = day(&c, "2026-10-19", 1000, 90.0).unwrap();
+        let d = day(&c, "2026-10-19", "sh600519", 1000, 90.0).unwrap();
         assert_eq!(d.pairs.len(), 1);
         assert_eq!(d.pairs[0].status, "OPEN");
         assert_eq!(d.unresolved, 1);
         assert!(d.fills.iter().any(|f| f.voided));
+    }
+
+    #[test]
+    fn symbols_do_not_cross_pair() {
+        let mut c = conn();
+        submit(
+            &mut c,
+            &sample("a1", "sh600519", "BUY", 100.0, 100, "09:40"),
+        )
+        .unwrap();
+        submit(
+            &mut c,
+            &sample("b1", "sz000858", "SELL", 200.0, 100, "09:45"),
+        )
+        .unwrap();
+
+        let a = day(&c, "2026-10-19", "sh600519", 1000, 90.0).unwrap();
+        let b = day(&c, "2026-10-19", "sz000858", 500, 190.0).unwrap();
+        assert_eq!(a.pairs.len(), 1);
+        assert_eq!(a.pairs[0].status, "OPEN");
+        assert_eq!(b.pairs.len(), 1);
+        assert_eq!(b.pairs[0].status, "OPEN");
+        assert_eq!(a.fills.len(), 1);
+        assert_eq!(b.fills.len(), 1);
     }
 }

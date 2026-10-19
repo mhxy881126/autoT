@@ -125,9 +125,14 @@ export const useDeskStore = defineStore("desk", () => {
     await loadWatchlist();
   }
 
-  async function loadFills(day: string): Promise<void> {    if (!isTauri()) return;
+  function activeSymbol(): string {
+    return config.value?.symbol ?? payload.value.meta.symbolId ?? "";
+  }
+
+  async function loadFills(day: string): Promise<void> {
+    if (!isTauri()) return;
     try {
-      fills.value = await call<Fill[]>("list_fills", { day });
+      fills.value = await call<Fill[]>("list_fills", { day, symbol: activeSymbol() });
     } catch (e) {
       bootError.value = e instanceof Error ? e.message : String(e);
     }
@@ -143,7 +148,7 @@ export const useDeskStore = defineStore("desk", () => {
   async function loadLedger(day: string): Promise<void> {
     if (!isTauri()) return;
     try {
-      ledger.value = await call<LedgerDay>("ledger_day", { day });
+      ledger.value = await call<LedgerDay>("ledger_day", { day, symbol: activeSymbol() });
     } catch (e) {
       bootError.value = e instanceof Error ? e.message : String(e);
     }
@@ -160,7 +165,12 @@ export const useDeskStore = defineStore("desk", () => {
     fileName: string,
     bytes: number[]
   ): Promise<ImportResult> {
-    const result = await call<ImportResult>("import_statement", { day, fileName, bytes });
+    const result = await call<ImportResult>("import_statement", {
+      day,
+      symbol: activeSymbol(),
+      fileName,
+      bytes
+    });
     await loadFills(day);
     await loadLedger(day);
     return result;
