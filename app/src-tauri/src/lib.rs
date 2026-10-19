@@ -7,6 +7,7 @@ mod features;
 mod history;
 mod ledger;
 mod market;
+mod research;
 mod session;
 mod state;
 mod statement;
@@ -45,6 +46,7 @@ pub fn run() {
             commands::audit_report,
             commands::backtest_day,
             commands::backtest_range,
+            commands::backtest_research,
             commands::import_minutes_csv,
             commands::list_minute_days,
             commands::get_config,

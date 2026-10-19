@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
-import type { BacktestResult, Scorecard } from "../lib/types";
+import type { BacktestResult, ParamCell, ResearchReport, Scorecard } from "../lib/types";
 import { money } from "../lib/format";
 import { isTauri } from "../lib/ipc";
 import { useDeskStore } from "../stores/desk";
@@ -11,9 +11,11 @@ const day = ref("");
 const rangeText = ref("");
 const single = ref<BacktestResult | null>(null);
 const card = ref<Scorecard | null>(null);
+const research = ref<ResearchReport | null>(null);
 const importing = ref(false);
 const busyDay = ref(false);
 const busyRange = ref(false);
+const busyResearch = ref(false);
 const importMsg = ref("");
 const err = ref("");
 
@@ -39,6 +41,7 @@ onMounted(() => void refreshDays());
 watch(symbol, () => {
   single.value = null;
   card.value = null;
+  research.value = null;
   day.value = "";
   rangeText.value = "";
   importMsg.value = "";
@@ -86,10 +89,7 @@ async function runDay(): Promise<void> {
 
 async function runRange(): Promise<void> {
   if (!symbol.value || busyRange.value) return;
-  const days = rangeText.value
-    .split(/[\s,，;；]+/)
-    .map((s) => s.trim())
-    .filter(Boolean);
+  const days = parseDays();
   if (!days.length) {
     err.value = "先填日期";
     return;
@@ -103,6 +103,54 @@ async function runRange(): Promise<void> {
   } finally {
     busyRange.value = false;
   }
+}
+
+function parseDays(): string[] {
+  return rangeText.value
+    .split(/[\s,，;；]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+async function runResearch(): Promise<void> {
+  if (!symbol.value || busyResearch.value) return;
+  const days = parseDays();
+  if (!days.length) {
+    err.value = "先填日期";
+    return;
+  }
+  busyResearch.value = true;
+  err.value = "";
+  try {
+    research.value = await store.backtestResearch(symbol.value, days);
+  } catch (e) {
+    err.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    busyResearch.value = false;
+  }
+}
+
+const sensTargets = computed(() => {
+  const set = new Set((research.value?.sensitivity ?? []).map((c) => c.targetLo));
+  return [...set].sort((a, b) => a - b);
+});
+
+const sensRows = computed(() => {
+  const map = new Map<number, Map<number, ParamCell>>();
+  for (const cell of research.value?.sensitivity ?? []) {
+    if (!map.has(cell.zEntry)) map.set(cell.zEntry, new Map());
+    map.get(cell.zEntry)!.set(cell.targetLo, cell);
+  }
+  return [...map.entries()].sort((a, b) => a[0] - b[0]);
+});
+
+function cellAt(z: number, lo: number): ParamCell | null {
+  const row = sensRows.value.find(([zz]) => zz === z);
+  return row?.[1].get(lo) ?? null;
+}
+
+function pct(v: number): string {
+  return (v * 100).toFixed(2) + "%";
 }
 </script>
 
@@ -199,6 +247,83 @@ async function runRange(): Promise<void> {
             </tr>
           </tbody>
         </table>
+      </template>
+    </div>
+
+    <div class="block">
+      <div class="lbl">样本外 / 参数敏感性</div>
+      <button class="btn full" :disabled="busyResearch" @click="runResearch">
+        {{ busyResearch ? "跑…" : "跑研究" }}
+      </button>
+
+      <template v-if="research">
+        <div class="note">{{ research.note }}</div>
+        <div class="grid">
+          <div><span>总天数</span><b>{{ research.totalDays }}</b></div>
+          <div><span>样本内</span><b>{{ research.inSampleDays.length }}</b></div>
+          <div><span>样本外</span><b>{{ research.outSampleDays.length }}</b></div>
+          <div>
+            <span>样本内最优</span>
+            <b v-if="research.selection">z {{ research.selection.zEntry }} / {{ pct(research.selection.targetLo) }}</b>
+            <b v-else>—</b>
+          </div>
+          <div>
+            <span>样本外净（最优）</span>
+            <b :class="(research.selection?.outSampleNet ?? 0) >= 0 ? 'pos' : 'neg'">
+              {{ research.selection ? money(research.selection.outSampleNet) : "—" }}
+            </b>
+          </div>
+          <div>
+            <span>样本外净（当前）</span>
+            <b :class="(research.currentOutSample?.net ?? 0) >= 0 ? 'pos' : 'neg'">
+              {{ research.currentOutSample ? money(research.currentOutSample.net) : "—" }}
+            </b>
+          </div>
+        </div>
+
+        <table class="tbl matrix">
+          <thead>
+            <tr>
+              <th>z\目标</th>
+              <th v-for="lo in sensTargets" :key="lo">{{ pct(lo) }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="[z, row] in sensRows" :key="z">
+              <td>{{ z.toFixed(1) }}</td>
+              <td
+                v-for="lo in sensTargets"
+                :key="lo"
+                :class="
+                  (cellAt(z, lo)?.net ?? 0) > 0
+                    ? 'pos'
+                    : (cellAt(z, lo)?.net ?? 0) < 0
+                      ? 'neg'
+                      : 'dim'
+                "
+              >
+                {{ (cellAt(z, lo)?.net ?? 0) === 0 ? "—" : money(cellAt(z, lo)!.net) }}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="note">矩阵为样本内净收益；参数选择只看样本内。</div>
+
+        <template v-if="research.walkForward.length">
+          <div class="lbl" style="margin-top: 8px">Walk-forward</div>
+          <table class="tbl">
+            <thead>
+              <tr><th>训练/测试</th><th>参数</th><th>测试净</th></tr>
+            </thead>
+            <tbody>
+              <tr v-for="(f, i) in research.walkForward" :key="i">
+                <td>{{ f.trainDays }}/{{ f.testDays }}</td>
+                <td>z {{ f.zEntry }} · {{ pct(f.targetLo) }}</td>
+                <td :class="f.testNet >= 0 ? 'pos' : 'neg'">{{ money(f.testNet) }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </template>
       </template>
     </div>
 
@@ -351,6 +476,9 @@ textarea {
 }
 .neg {
   color: #26a69a;
+}
+.dim {
+  color: #4d5a70;
 }
 .empty {
   color: #4d5a70;

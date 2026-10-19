@@ -257,6 +257,47 @@ export interface HistoryImportResult {
   skipped: number;
 }
 
+export interface ParamCell {
+  zEntry: number;
+  targetLo: number;
+  trades: number;
+  net: number;
+  winRate: number;
+  maxDrawdown: number;
+}
+
+export interface SelectedParams {
+  zEntry: number;
+  targetLo: number;
+  inSampleNet: number;
+  inSampleTrades: number;
+  outSampleNet: number;
+  outSampleTrades: number;
+}
+
+export interface FoldResult {
+  trainDays: number;
+  testDays: number;
+  zEntry: number;
+  targetLo: number;
+  trainNet: number;
+  testNet: number;
+  testTrades: number;
+}
+
+export interface ResearchReport {
+  symbol: string;
+  totalDays: number;
+  inSampleDays: string[];
+  outSampleDays: string[];
+  note: string;
+  selection: SelectedParams | null;
+  currentOutSample: Scorecard | null;
+  bestOutSample: Scorecard | null;
+  sensitivity: ParamCell[];
+  walkForward: FoldResult[];
+}
+
 export interface FeedStatus {
   connected: boolean;
   source: "tencent" | "sina" | "none";

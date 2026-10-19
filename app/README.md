@@ -26,6 +26,10 @@ Tauri 2（Rust）+ Vue 3 + TypeScript + Pinia + ECharts。
 
 ![回测](./backtest-ui.png)
 
+样本外与参数敏感性：
+
+![研究](./research-ui.png)
+
 ## 快速开始
 
 ```bash
@@ -77,6 +81,7 @@ pnpm tauri dev
 | 启动完整性检查 | ✅ 本机验证 | 未闭环 T 在顶栏横幅列出；测试数据已清理 |
 | 多标的分时缓存 | ✅ 单测 + 真机 | `minute_raw` 主键含 `symbol`，旧库自动迁移；实测两只票各 242 根 |
 | 回测引擎 v1 | ✅ 单测 + 真机 UI | 单日/多日回测：限价撮合、费用、滑点、T+1；CSV 导入；右栏「回测」页 |
+| 样本外 / 参数敏感性 | ✅ 单测 + 真机 UI | 70/30 切分、z×目标网格、walk-forward；样本不足时只做敏感性 |
 | Windows 安装包 | ✅ CI 构建 | NSIS 2.8MB + MSI 3.6MB，已从 CI 下载；本机 NSIS 解压被杀软拦截 |
 | macOS universal dmg | ✅ CI 构建 | 6.8MB，覆盖 Apple Silicon + Intel；未真机安装 |
 | 签名 / 公证 | ❌ 未执行 | 需要 Windows 证书与 Apple 开发者账号 |
@@ -173,6 +178,7 @@ app/
   - `backtest_range(symbol, days)`：按日期顺序跑多日，未缓存日期跳过
   - `list_minute_days(symbol)`：回测页的已缓存日期
 - 右栏 **回测** 页：CSV 导入、已缓存日期、单日结果、区间记分卡。
+- 研究页：70/30 样本内/样本外、z × 目标价差网格（样本内选参、样本外验证）、walk-forward（≥8 天）。
 - 历史数据限制：目前只支持 CSV 导入；分钟点没有 OHLC，目标/止损按收盘价触发。
 
 ## D9 稳定性

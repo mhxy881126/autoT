@@ -16,6 +16,7 @@ use crate::features::{self, Bar};
 use crate::history;
 use crate::ledger::{self, Fill, FillInput, LedgerDay};
 use crate::market::{self, DayBar, Quote};
+use crate::research;
 use crate::session;
 use crate::state::{AppState, FeedStatus, ScanCacheEntry, ScanFail, SeriesCache};
 use crate::statement::{self, ImportResult};
@@ -436,6 +437,55 @@ pub fn backtest_range(
     let mut card = backtest::scorecard(&results);
     card.days = loaded_days;
     Ok(card)
+}
+
+#[tauri::command]
+pub fn backtest_research(
+    state: tauri::State<'_, AppState>,
+    symbol: String,
+    days: Vec<String>,
+) -> Result<research::ResearchReport, String> {
+    let cfg = {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        config::load_for(&conn, &symbol)
+    };
+    let mut days: Vec<String> = days.iter().map(|d| day_key(d)).collect();
+    days.sort();
+    days.dedup();
+
+    let mut day_bars = Vec::new();
+    let mut prev_close = 0.0f64;
+    {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        for day in &days {
+            let raw = store::load_minutes(&conn, &symbol, day)?;
+            if raw.is_empty() {
+                continue;
+            }
+            let pc = if prev_close > 0.0 {
+                prev_close
+            } else {
+                raw.first().map(|b| b.price).unwrap_or(0.0)
+            };
+            let bars = features::build(&raw, pc);
+            if let Some(last) = raw.last() {
+                prev_close = last.price;
+            }
+            day_bars.push(research::DayBars {
+                day: day.clone(),
+                bars,
+            });
+        }
+    }
+    if day_bars.is_empty() {
+        return Err(format!("{symbol} 在给定日期范围内没有缓存分钟数据"));
+    }
+    Ok(research::research(
+        &symbol,
+        &day_bars,
+        &cfg,
+        &backtest::FeeModel::default(),
+    ))
 }
 
 #[tauri::command]

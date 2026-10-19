@@ -13,6 +13,7 @@ import type {
   ImportResult,
   LedgerDay,
   MinuteBar,
+  ResearchReport,
   Scorecard,
   Snapshot,
   StrategyConfig,
@@ -203,6 +204,10 @@ export const useDeskStore = defineStore("desk", () => {
     return call<Scorecard>("backtest_range", { symbol, days });
   }
 
+  async function backtestResearch(symbol: string, days: string[]): Promise<ResearchReport> {
+    return call<ResearchReport>("backtest_research", { symbol, days });
+  }
+
   function activeSymbol(): string {
     return config.value?.symbol ?? payload.value.meta.symbolId ?? "";
   }
@@ -288,6 +293,7 @@ export const useDeskStore = defineStore("desk", () => {
     importMinutesCsv,
     backtestDay,
     backtestRange,
+    backtestResearch,
     loadFills,
     loadLedger,
     submitFill,
