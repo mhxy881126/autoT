@@ -201,6 +201,15 @@ pub(crate) fn stats_for(signals: &[Signal]) -> serde_json::Value {
     })
 }
 
+fn plan_date_cn() -> String {
+    use chrono::{Datelike, Duration, Weekday};
+    let mut day = session::now_cn().date_naive();
+    while matches!(day.weekday(), Weekday::Sat | Weekday::Sun) {
+        day += Duration::days(1);
+    }
+    day.format("%Y-%m-%d").to_string()
+}
+
 /// 启动时拉一次全量：快照 + 分时 + 日K，组装成前端直接可渲染的 DeskPayload。
 #[tauri::command]
 pub async fn bootstrap(state: tauri::State<'_, AppState>) -> Result<serde_json::Value, String> {
@@ -246,9 +255,10 @@ pub async fn bootstrap(state: tauri::State<'_, AppState>) -> Result<serde_json::
     *state.base_cost.lock().map_err(|e| e.to_string())? = base_cost;
 
     let day_fmt = fmt_day(&day);
+    let plan_date = plan_date_cn();
     let plan = {
         let conn = state.db.lock().map_err(|e| e.to_string())?;
-        plan::get(&conn, &day_fmt, &symbol)?
+        plan::get(&conn, &plan_date, &symbol)?
     };
     let mut signals = strategy::scan(&bars, &day_fmt, &cfg);
     let day_amount = raw.last().map(|b| b.cum_amt).unwrap_or(0.0);
@@ -311,6 +321,7 @@ pub async fn bootstrap(state: tauri::State<'_, AppState>) -> Result<serde_json::
             "code": code,
             "market": market_code,
             "date": day_fmt,
+            "planDate": plan_date,
             "prevClose": quote.prev_close,
             "open": quote.open,
             "high": quote.high,

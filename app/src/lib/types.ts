@@ -19,6 +19,7 @@ export interface DeskMeta {
   code: string;
   market: string;
   date: string;
+  planDate?: string;
   prevClose: number;
   open: number;
   high: number;

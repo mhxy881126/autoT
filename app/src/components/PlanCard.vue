@@ -44,7 +44,7 @@ async function save(): Promise<void> {
   msg.value = "";
   try {
     await store.savePlan({
-      day: store.payload.meta.date,
+      day: store.payload.meta.planDate ?? store.payload.meta.date,
       symbol: store.payload.meta.symbolId,
       bias: form.bias,
       maxTrades: Number(form.maxTrades),
