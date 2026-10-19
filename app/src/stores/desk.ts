@@ -1,7 +1,7 @@
 import { defineStore } from "pinia";
 import { computed, ref } from "vue";
 import demoJson from "../data/demo.json";
-import type { DeskPayload, Fill, FillInput, MinuteBar, Snapshot } from "../lib/types";
+import type { DeskPayload, Fill, FillInput, LedgerDay, MinuteBar, Snapshot } from "../lib/types";
 import { call, isTauri, subscribeSignals, subscribeTick } from "../lib/ipc";
 
 const demo = demoJson as unknown as DeskPayload;
@@ -13,6 +13,7 @@ export const useDeskStore = defineStore("desk", () => {
   const bootError = ref<string | null>(null);
   const version = ref<string>("web");
   const fills = ref<Fill[]>([]);
+  const ledger = ref<LedgerDay | null>(null);
 
   const minutes = computed<MinuteBar[]>(() => {
     const base = payload.value.minutes.slice();
@@ -47,6 +48,7 @@ export const useDeskStore = defineStore("desk", () => {
         payload.value.meta.conclusion = p.conclusion;
       });
       await loadFills(boot.meta.date);
+      await loadLedger(boot.meta.date);
     } catch (e) {
       bootError.value = e instanceof Error ? e.message : String(e);
     }
@@ -64,7 +66,23 @@ export const useDeskStore = defineStore("desk", () => {
   async function submitFill(input: FillInput): Promise<Fill> {
     const fill = await call<Fill>("submit_fill", { input });
     await loadFills(input.day);
+    await loadLedger(input.day);
     return fill;
+  }
+
+  async function loadLedger(day: string): Promise<void> {
+    if (!isTauri()) return;
+    try {
+      ledger.value = await call<LedgerDay>("ledger_day", { day });
+    } catch (e) {
+      bootError.value = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  async function voidFill(id: number, day: string): Promise<void> {
+    await call<void>("void_fill", { id });
+    await loadFills(day);
+    await loadLedger(day);
   }
 
   return {
@@ -76,8 +94,11 @@ export const useDeskStore = defineStore("desk", () => {
     bootError,
     version,
     fills,
+    ledger,
     load,
     loadFills,
-    submitFill
+    loadLedger,
+    submitFill,
+    voidFill
   };
 });

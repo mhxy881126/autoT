@@ -83,6 +83,7 @@ export interface Fill extends FillInput {
   fee: number;
   source: "manual" | "import";
   createdAt: string;
+  voided: boolean;
 }
 
 export interface TPair {

@@ -27,8 +27,13 @@ CREATE TABLE IF NOT EXISTS fills (
   source      TEXT    NOT NULL DEFAULT 'manual' CHECK (source IN ('manual','import')),
   note        TEXT,
   created_at  TEXT    NOT NULL,
-  UNIQUE (trade_day, ts, side, price_cents, qty)   -- 防重复回填/重复导入
+  voided      INTEGER NOT NULL DEFAULT 0           -- 冲正标记：1 表示已作废，配对时跳过
 );
+
+-- 只对未冲正的成交做自然键去重：冲正后允许用正确内容重新录入。
+CREATE UNIQUE INDEX IF NOT EXISTS uq_fills_active
+  ON fills (trade_day, ts, side, price_cents, qty)
+  WHERE voided = 0;
 
 CREATE INDEX IF NOT EXISTS idx_fills_day ON fills (trade_day, ts);
 

@@ -10,6 +10,8 @@ pub fn open(path: &Path) -> Result<Connection, String> {
     let conn = Connection::open(path).map_err(|e| format!("打开数据库失败: {e}"))?;
     conn.execute_batch(include_str!("../../../contracts/schema.sql"))
         .map_err(|e| format!("初始化数据库失败: {e}"))?;
+    // 兼容早期库：CREATE TABLE IF NOT EXISTS 不会补列。
+    let _ = conn.execute_batch("ALTER TABLE fills ADD COLUMN voided INTEGER NOT NULL DEFAULT 0");
     Ok(conn)
 }
 

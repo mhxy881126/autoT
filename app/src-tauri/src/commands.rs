@@ -45,8 +45,14 @@ pub fn feed_status(state: tauri::State<'_, AppState>) -> Result<FeedStatus, Stri
 
 #[tauri::command]
 pub fn submit_fill(state: tauri::State<'_, AppState>, input: FillInput) -> Result<Fill, String> {
-    let conn = state.db.lock().map_err(|e| e.to_string())?;
-    ledger::submit(&conn, &input)
+    let mut conn = state.db.lock().map_err(|e| e.to_string())?;
+    ledger::submit(&mut conn, &input)
+}
+
+#[tauri::command]
+pub fn void_fill(state: tauri::State<'_, AppState>, id: i64) -> Result<(), String> {
+    let mut conn = state.db.lock().map_err(|e| e.to_string())?;
+    ledger::void_fill(&mut conn, id)
 }
 
 #[tauri::command]
@@ -58,7 +64,7 @@ pub fn list_fills(state: tauri::State<'_, AppState>, day: String) -> Result<Vec<
 #[tauri::command]
 pub fn ledger_day(state: tauri::State<'_, AppState>, day: String) -> Result<LedgerDay, String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
-    ledger::day(&conn, &day)
+    ledger::day(&conn, &day, 1000, 0.0)
 }
 
 pub(crate) fn fmt_day(d: &str) -> String {

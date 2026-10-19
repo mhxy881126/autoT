@@ -47,6 +47,17 @@ async function record(): Promise<void> {
   }
 }
 
+async function undoFill(id: number): Promise<void> {
+  if (!canWrite) return;
+  msg.value = "";
+  try {
+    await store.voidFill(id, props.payload.meta.date);
+    msg.value = `已冲正 #${id}`;
+  } catch (e) {
+    msg.value = e instanceof Error ? e.message : String(e);
+  }
+}
+
 type Tab = "signals" | "test" | "book";
 const hash = typeof location !== "undefined" ? location.hash.replace("#", "") : "";
 const tab = ref<Tab>(hash === "test" || hash === "book" ? hash : "signals");
@@ -222,10 +233,15 @@ onMounted(async () => {
         </div>
         <table v-if="canWrite && store.fills.length" class="cost">
           <tbody>
-            <tr v-for="f in store.fills" :key="f.id">
+            <tr v-for="f in store.fills" :key="f.id" :class="{ voided: f.voided }">
               <td>{{ f.t }} {{ f.side === "BUY" ? "买" : "卖" }}</td>
               <td>{{ f.qty }} @ {{ f.price.toFixed(2) }}</td>
               <td>费 ¥{{ f.fee.toFixed(2) }}</td>
+              <td>
+                <button class="mini-btn" :disabled="f.voided" @click="undoFill(f.id)">
+                  {{ f.voided ? "已冲正" : "冲正" }}
+                </button>
+              </td>
             </tr>
           </tbody>
         </table>
@@ -239,6 +255,30 @@ onMounted(async () => {
           </tbody>
         </table>
         <div v-else class="empty" style="padding: 8px 4px">0 笔成交 · 严格门槛下无可执行信号</div>
+
+        <div v-if="canWrite && store.ledger" style="margin-top: 8px">
+          <div class="kv">
+            <div>持仓 <span>{{ store.ledger?.position.baseQty ?? 0 }} 股</span></div>
+            <div>可卖 <span>{{ store.ledger?.position.available ?? 0 }} 股</span></div>
+            <div>
+              已实现
+              <span :class="(store.ledger?.realizedNet ?? 0) >= 0 ? 'pos' : 'neg'">
+                {{ money(store.ledger?.realizedNet ?? 0) }}
+              </span>
+            </div>
+            <div>未闭环 <span>{{ store.ledger?.unresolved ?? 0 }} 笔</span></div>
+          </div>
+          <table v-if="store.ledger?.pairs.length" class="cost">
+            <tbody>
+              <tr v-for="p in store.ledger?.pairs ?? []" :key="p.id">
+                <td>{{ p.side }} {{ p.qty }} 股</td>
+                <td :class="(p.net ?? 0) >= 0 ? 'pos' : 'neg'">
+                  {{ p.status === "CLOSED" ? money(p.net ?? 0) : "未闭环" }}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
 
         <div class="divider"></div>
         <div class="lbl" style="font-size: 11px; color: #76839a; margin-bottom: 2px">往返成本模型（10 万元）</div>
@@ -286,3 +326,23 @@ onMounted(async () => {
     </div>
   </div>
 </template>
+
+<style scoped>
+.voided {
+  opacity: 0.38;
+  text-decoration: line-through;
+}
+.mini-btn {
+  background: #1a2230;
+  border: 1px solid #28313f;
+  color: #9aa7bb;
+  border-radius: 3px;
+  padding: 1px 5px;
+  font-size: 10px;
+  cursor: pointer;
+}
+.mini-btn:disabled {
+  cursor: default;
+  color: #4d5a70;
+}
+</style>

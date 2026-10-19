@@ -21,6 +21,7 @@ pub fn run() {
             commands::fetch_quote,
             commands::feed_status,
             commands::submit_fill,
+            commands::void_fill,
             commands::list_fills,
             commands::ledger_day,
             commands::bootstrap,
