@@ -493,6 +493,31 @@ pub fn insert_imported(conn: &Connection, input: &FillInput) -> Result<bool, Str
     Ok(changed == 1)
 }
 
+/// 浮动盈亏：底仓 + 未闭环 T，账本与风控共用同一口径。
+pub fn unrealized_pnl(day: &LedgerDay, base_qty: i64, base_cost: f64, price: f64) -> f64 {
+    if price <= 0.0 {
+        return 0.0;
+    }
+    let mut pnl = 0.0;
+    if base_cost > 0.0 {
+        pnl += (price - base_cost) * base_qty as f64;
+    }
+    for pair in day.pairs.iter().filter(|p| p.status != "CLOSED") {
+        if let Some(fill) = day.fills.iter().find(|f| f.id == pair.open_fill_id) {
+            pnl += if pair.side == "正T" {
+                (price - fill.price) * pair.qty as f64
+            } else {
+                (fill.price - price) * pair.qty as f64
+            };
+        }
+    }
+    (pnl * 100.0).round() / 100.0
+}
+
+pub fn mark(day: &mut LedgerDay, base_qty: i64, base_cost: f64, price: f64) {
+    day.unrealized = unrealized_pnl(day, base_qty, base_cost, price);
+}
+
 pub fn day(
     conn: &Connection,
     day: &str,
@@ -546,6 +571,58 @@ pub fn day(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unrealized_includes_base_and_open_leg() {
+        let d = LedgerDay {
+            day: "2026-10-19".to_string(),
+            symbol: "sz000858".to_string(),
+            position: Position {
+                base_qty: 1000,
+                available: 1000,
+                frozen: 0,
+                t_qty: 0,
+                base_cost: 20.0,
+                updated_at: "x".to_string(),
+            },
+            fills: vec![Fill {
+                id: 1,
+                client_id: "x".to_string(),
+                symbol: "sz000858".to_string(),
+                day: "2026-10-19".to_string(),
+                t: "09:40".to_string(),
+                side: "BUY".to_string(),
+                price: 10.0,
+                qty: 100,
+                fee: 0.0,
+                signal_id: None,
+                source: "manual".to_string(),
+                note: None,
+                created_at: "x".to_string(),
+                voided: false,
+            }],
+            pairs: vec![TradePair {
+                id: 1,
+                day: "2026-10-19".to_string(),
+                symbol: "sz000858".to_string(),
+                side: "正T".to_string(),
+                open_fill_id: 1,
+                close_fill_id: None,
+                qty: 100,
+                gross: None,
+                cost: None,
+                net: None,
+                status: "OPEN".to_string(),
+            }],
+            realized_net: 100.0,
+            unrealized: 0.0,
+            unresolved: 1,
+        };
+        assert_eq!(unrealized_pnl(&d, 1000, 20.0, 25.0), 6500.0);
+        let mut marked = d;
+        mark(&mut marked, 1000, 20.0, 25.0);
+        assert_eq!(marked.unrealized, 6500.0);
+    }
 
     fn conn() -> Connection {
         let c = Connection::open_in_memory().expect("memory db");

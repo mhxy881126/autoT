@@ -288,7 +288,11 @@ export const useDeskStore = defineStore("desk", () => {
   async function loadLedger(day: string): Promise<void> {
     if (!isTauri()) return;
     try {
-      ledger.value = await call<LedgerDay>("ledger_day", { day, symbol: activeSymbol() });
+      ledger.value = await call<LedgerDay>("ledger_day", {
+        day,
+        symbol: activeSymbol(),
+        price: payload.value.last.price
+      });
     } catch (e) {
       bootError.value = e instanceof Error ? e.message : String(e);
     }

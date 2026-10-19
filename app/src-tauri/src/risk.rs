@@ -4,7 +4,7 @@
 use serde::Serialize;
 
 use crate::config::StrategyConfig;
-use crate::ledger::LedgerDay;
+use crate::ledger::{self, LedgerDay};
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -32,22 +32,7 @@ pub fn evaluate(
 ) -> RiskState {
     let mut reasons = Vec::new();
 
-    let base_float = if base_cost > 0.0 {
-        (price - base_cost) * cfg.base_qty as f64
-    } else {
-        0.0
-    };
-    let mut open_float = 0.0;
-    for pair in ledger.pairs.iter().filter(|p| p.status != "CLOSED") {
-        if let Some(fill) = ledger.fills.iter().find(|f| f.id == pair.open_fill_id) {
-            open_float += if pair.side == "正T" {
-                (price - fill.price) * pair.qty as f64
-            } else {
-                (fill.price - price) * pair.qty as f64
-            };
-        }
-    }
-    let unrealized = base_float + open_float;
+    let unrealized = ledger::unrealized_pnl(ledger, cfg.base_qty, base_cost, price);
     let total_pnl = ledger.realized_net + unrealized;
 
     let daily_limit = (equity * cfg.daily_loss_limit).max(0.0);

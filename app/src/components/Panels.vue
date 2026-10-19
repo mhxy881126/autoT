@@ -334,6 +334,24 @@ onMounted(async () => {
                 {{ money(store.ledger?.realizedNet ?? 0) }}
               </span>
             </div>
+            <div>
+              浮动
+              <span :class="(store.ledger?.unrealized ?? 0) >= 0 ? 'pos' : 'neg'">
+                {{ money(store.ledger?.unrealized ?? 0) }}
+              </span>
+            </div>
+            <div>
+              合计
+              <span
+                :class="
+                  (store.ledger?.realizedNet ?? 0) + (store.ledger?.unrealized ?? 0) >= 0
+                    ? 'pos'
+                    : 'neg'
+                "
+              >
+                {{ money((store.ledger?.realizedNet ?? 0) + (store.ledger?.unrealized ?? 0)) }}
+              </span>
+            </div>
             <div>未闭环 <span>{{ store.ledger?.unresolved ?? 0 }} 笔</span></div>
           </div>
           <table v-if="store.ledger?.pairs.length" class="cost">

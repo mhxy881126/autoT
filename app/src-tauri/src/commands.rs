@@ -87,10 +87,38 @@ pub fn ledger_day(
     state: tauri::State<'_, AppState>,
     day: String,
     symbol: String,
+    price: Option<f64>,
 ) -> Result<LedgerDay, String> {
-    let conn = state.db.lock().map_err(|e| e.to_string())?;
-    let cfg = config::load_for(&conn, &symbol);
-    ledger::day(&conn, &day, &symbol, cfg.base_qty, cfg.base_cost)
+    let cfg = {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        config::load_for(&conn, &symbol)
+    };
+    let base_cost = {
+        let stored = *state.base_cost.lock().map_err(|e| e.to_string())?;
+        if cfg.base_cost > 0.0 {
+            cfg.base_cost
+        } else {
+            stored
+        }
+    };
+    let mut ledger_day = {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        ledger::day(&conn, &day, &symbol, cfg.base_qty, cfg.base_cost)?
+    };
+    let mark_price = match price.filter(|p| *p > 0.0) {
+        Some(p) => p,
+        None => {
+            let conn = state.db.lock().map_err(|e| e.to_string())?;
+            store::load_minutes(&conn, &symbol, &day)?
+                .last()
+                .map(|b| b.price)
+                .unwrap_or(0.0)
+        }
+    };
+    if mark_price > 0.0 {
+        ledger::mark(&mut ledger_day, cfg.base_qty, base_cost, mark_price);
+    }
+    Ok(ledger_day)
 }
 
 #[tauri::command]
