@@ -55,6 +55,7 @@ pub fn run() {
                 }),
                 db: Mutex::new(conn),
                 series: Mutex::new(None),
+                scan_cache: Mutex::new(std::collections::HashMap::new()),
             });
 
             let handle = app.handle().clone();

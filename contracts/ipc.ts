@@ -161,6 +161,7 @@ export interface WatchScan {
   signalSide: string | null;
   signalT: string | null;
   signalTarget: number | null;
+  cached: boolean;
 }
 
 export interface FeedStatus {

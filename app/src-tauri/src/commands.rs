@@ -9,7 +9,7 @@ use crate::features::{self, Bar};
 use crate::ledger::{self, Fill, FillInput, LedgerDay};
 use crate::market::{self, DayBar, Quote};
 use crate::session;
-use crate::state::{AppState, FeedStatus, SeriesCache};
+use crate::state::{AppState, FeedStatus, ScanCacheEntry, SeriesCache};
 use crate::statement::{self, ImportResult};
 use crate::store;
 use crate::strategy::{self, Signal};
@@ -471,9 +471,20 @@ pub struct WatchScan {
     pub signal_side: Option<String>,
     pub signal_t: Option<String>,
     pub signal_target: Option<f64>,
+    pub cached: bool,
 }
 
-/// 批量扫描自选：每只票各自 regime、候选数、通过数；不落库，只供列表展示。
+/// 报价时间截断到分钟：同一分钟内分时不会变，可直接复用缓存。
+fn minute_key(quote: Option<&market::Quote>) -> String {
+    quote
+        .map(|q| {
+            let end = q.time.len().min(12);
+            q.time[..end].to_string()
+        })
+        .unwrap_or_default()
+}
+
+/// 批量扫描自选：每只票独立参数；缓存命中直接复用，未命中并发拉取。
 #[tauri::command]
 pub async fn scan_watchlist(state: tauri::State<'_, AppState>) -> Result<Vec<WatchScan>, String> {
     let (symbols, configs) = {
@@ -492,33 +503,93 @@ pub async fn scan_watchlist(state: tauri::State<'_, AppState>) -> Result<Vec<Wat
     let map: HashMap<String, market::Quote> =
         quotes.into_iter().map(|q| (q.symbol.clone(), q)).collect();
 
+    let mut bars_by_symbol: HashMap<String, Vec<Bar>> = HashMap::new();
+    let mut cached_symbols: HashMap<String, bool> = HashMap::new();
+    let mut misses: Vec<String> = Vec::new();
+
+    {
+        let cache = state.scan_cache.lock().map_err(|e| e.to_string())?;
+        for symbol in &symbols {
+            let key = minute_key(map.get(symbol));
+            let hit = !key.is_empty()
+                && cache
+                    .get(symbol)
+                    .map(|entry| entry.minute_key == key && !entry.bars.is_empty())
+                    .unwrap_or(false);
+            if hit {
+                if let Some(entry) = cache.get(symbol) {
+                    bars_by_symbol.insert(symbol.clone(), entry.bars.clone());
+                }
+                cached_symbols.insert(symbol.clone(), true);
+            } else {
+                misses.push(symbol.clone());
+            }
+        }
+    }
+
+    let client = state.client.clone();
+    let fetches = misses.into_iter().map(|symbol| {
+        let client = client.clone();
+        async move {
+            let result = market::fetch_minute(&client, &symbol).await;
+            (symbol, result)
+        }
+    });
+    let fetched = futures::future::join_all(fetches).await;
+
+    {
+        let mut cache = state.scan_cache.lock().map_err(|e| e.to_string())?;
+        for (symbol, result) in fetched {
+            let mut built_bars = None;
+            if let Ok((_day, raw)) = result {
+                if !raw.is_empty() {
+                    let prev_close = map.get(&symbol).map(|q| q.prev_close).unwrap_or(0.0);
+                    let bars = features::build(&raw, prev_close);
+                    let key = minute_key(map.get(&symbol));
+                    cache.insert(
+                        symbol.clone(),
+                        ScanCacheEntry {
+                            minute_key: key,
+                            bars: bars.clone(),
+                        },
+                    );
+                    built_bars = Some(bars);
+                }
+            }
+            if let Some(bars) = built_bars {
+                bars_by_symbol.insert(symbol.clone(), bars);
+            }
+            cached_symbols.insert(symbol, false);
+        }
+    }
+
     let mut out = Vec::new();
     for symbol in &symbols {
         let cfg = configs.get(symbol).cloned().unwrap_or_default();
         let quote = map.get(symbol);
+        let bars = bars_by_symbol.get(symbol);
         let mut regime = "震荡".to_string();
         let mut candidates = 0i64;
         let mut accepted = 0i64;
         let mut signal_side = None;
         let mut signal_t = None;
         let mut signal_target = None;
+        let mut cached = cached_symbols.get(symbol).copied().unwrap_or(false);
 
-        if !cfg.paused {
-            if let Ok((_day, raw)) = market::fetch_minute(&state.client, symbol).await {
-                if !raw.is_empty() {
-                    let prev_close = quote.map(|q| q.prev_close).unwrap_or(0.0);
-                    let bars = features::build(&raw, prev_close);
-                    if let Some(last) = bars.last() {
-                        regime = last.regime.clone();
-                    }
-                    let signals = strategy::scan(&bars, "live", &cfg);
-                    candidates = signals.len() as i64;
-                    accepted = signals.iter().filter(|s| s.accepted).count() as i64;
-                    if let Some(sig) = signals.iter().rev().find(|s| s.accepted) {
-                        signal_side = Some(sig.side.clone());
-                        signal_t = Some(sig.t.clone());
-                        signal_target = Some(sig.target);
-                    }
+        if cfg.paused {
+            cached = false;
+        } else if let Some(bars) = bars {
+            if !bars.is_empty() {
+                if let Some(last) = bars.last() {
+                    regime = last.regime.clone();
+                }
+                let signals = strategy::scan(bars, "live", &cfg);
+                candidates = signals.len() as i64;
+                accepted = signals.iter().filter(|s| s.accepted).count() as i64;
+                if let Some(sig) = signals.iter().rev().find(|s| s.accepted) {
+                    signal_side = Some(sig.side.clone());
+                    signal_t = Some(sig.t.clone());
+                    signal_target = Some(sig.target);
                 }
             }
         }
@@ -543,8 +614,34 @@ pub async fn scan_watchlist(state: tauri::State<'_, AppState>) -> Result<Vec<Wat
             signal_side,
             signal_t,
             signal_target,
+            cached,
         });
     }
 
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::minute_key;
+    use crate::market::Quote;
+
+    fn quote(time: &str) -> Quote {
+        Quote {
+            symbol: "sh600519".to_string(),
+            name: "贵州茅台".to_string(),
+            price: 1300.0,
+            prev_close: 1300.0,
+            open: 1300.0,
+            high: 1300.0,
+            low: 1300.0,
+            time: time.to_string(),
+        }
+    }
+
+    #[test]
+    fn minute_key_truncates_to_minute() {
+        assert_eq!(minute_key(Some(&quote("20261019150003"))), "202610191500");
+        assert_eq!(minute_key(None), "");
+    }
 }

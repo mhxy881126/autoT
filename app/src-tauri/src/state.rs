@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Mutex;
 
 use rusqlite::Connection;
@@ -21,6 +22,13 @@ pub struct SeriesCache {
     pub bars: Vec<Bar>,
 }
 
+#[derive(Clone)]
+pub struct ScanCacheEntry {
+    /// 报价时间截断到分钟（YYYYMMDDHHMM）。同一分钟内复用分时。
+    pub minute_key: String,
+    pub bars: Vec<Bar>,
+}
+
 pub struct AppState {
     pub client: reqwest::Client,
     pub symbol: Mutex<String>,
@@ -28,4 +36,5 @@ pub struct AppState {
     pub feed: Mutex<FeedStatus>,
     pub db: Mutex<Connection>,
     pub series: Mutex<Option<SeriesCache>>,
+    pub scan_cache: Mutex<HashMap<String, ScanCacheEntry>>,
 }
