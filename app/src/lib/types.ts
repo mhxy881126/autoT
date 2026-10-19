@@ -120,6 +120,7 @@ export interface DeskPayload {
   stats: DeskStats;
   risk?: import("../../../contracts/ipc").RiskState;
   health?: import("../../../contracts/ipc").MarketHealth;
+  plan?: import("../../../contracts/ipc").DailyPlan | null;
   scenarios: Scenario[];
   sensitivity: SensitivityRow[];
   last: LastState;

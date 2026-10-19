@@ -8,6 +8,7 @@ import type {
   BacktestResult,
   DeskPayload,
   DeskStats,
+  DailyPlan,
   Fill,
   FillInput,
   HistoryImportResult,
@@ -21,6 +22,7 @@ import type {
   MinuteDay,
   PrecheckInput,
   PrecheckResult,
+  PlanInput,
   ResearchReport,
   RiskState,
   SampleResult,
@@ -169,6 +171,12 @@ export const useDeskStore = defineStore("desk", () => {
     } catch (e) {
       bootError.value = e instanceof Error ? e.message : String(e);
     }
+  }
+
+  async function savePlan(input: PlanInput): Promise<DailyPlan> {
+    const plan = await call<DailyPlan>("daily_plan_save", { input });
+    payload.value.plan = plan;
+    return plan;
   }
 
   async function precheckOrder(input: PrecheckInput): Promise<PrecheckResult> {
@@ -372,6 +380,7 @@ export const useDeskStore = defineStore("desk", () => {
     emergency,
     precheckOrder,
     setEmergencyStop,
+    savePlan,
     journal,
     journalStats,
     loadJournal,

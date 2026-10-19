@@ -8,6 +8,7 @@ mod history;
 mod journal;
 mod ledger;
 mod market;
+mod plan;
 mod research;
 mod risk;
 mod sample;
@@ -53,6 +54,8 @@ pub fn run() {
             commands::risk_state,
             commands::refresh_signals,
             commands::market_health,
+            commands::daily_plan_get,
+            commands::daily_plan_save,
             commands::set_emergency_stop,
             commands::precheck_order,
             commands::audit_report,

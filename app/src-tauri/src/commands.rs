@@ -18,6 +18,7 @@ use crate::history;
 use crate::journal::{self, JournalEntry, JournalInput, JournalStats};
 use crate::ledger::{self, Fill, FillInput, LedgerDay};
 use crate::market::{self, DayBar, Quote};
+use crate::plan::{self, DailyPlan, PlanInput};
 use crate::research;
 use crate::risk::{self, RiskState};
 use crate::sample;
@@ -245,6 +246,10 @@ pub async fn bootstrap(state: tauri::State<'_, AppState>) -> Result<serde_json::
     *state.base_cost.lock().map_err(|e| e.to_string())? = base_cost;
 
     let day_fmt = fmt_day(&day);
+    let plan = {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        plan::get(&conn, &day_fmt, &symbol)?
+    };
     let mut signals = strategy::scan(&bars, &day_fmt, &cfg);
     let day_amount = raw.last().map(|b| b.cum_amt).unwrap_or(0.0);
     let risk_state = risk_filter(
@@ -332,6 +337,7 @@ pub async fn bootstrap(state: tauri::State<'_, AppState>) -> Result<serde_json::
         "stats": stats,
         "risk": risk_state,
         "health": health,
+        "plan": plan,
         "scenarios": [],
         "sensitivity": [],
         "last": last
@@ -900,6 +906,25 @@ pub fn health_for(state: &AppState) -> MarketHealth {
 }
 
 #[tauri::command]
+pub fn daily_plan_get(
+    state: tauri::State<'_, AppState>,
+    day: String,
+    symbol: String,
+) -> Result<Option<DailyPlan>, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    plan::get(&conn, &day_key(&day), &symbol)
+}
+
+#[tauri::command]
+pub fn daily_plan_save(
+    state: tauri::State<'_, AppState>,
+    input: PlanInput,
+) -> Result<DailyPlan, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    plan::save(&conn, &input)
+}
+
+#[tauri::command]
 pub fn market_health(state: tauri::State<'_, AppState>) -> MarketHealth {
     health_for(&state)
 }
@@ -1097,6 +1122,43 @@ pub fn precheck_order(
             format!("日亏 {}，连亏 {}", risk.daily_pnl, risk.consecutive_losses)
         },
     );
+
+    let day_plan = {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        plan::get(&conn, &day, &input.symbol)?
+    };
+    if let Some(p) = day_plan {
+        let bias_ok = match p.bias.as_str() {
+            "正T" => side == "BUY",
+            "倒T" => side == "SELL",
+            "双向" => true,
+            _ => false,
+        };
+        push(
+            "盘前计划方向",
+            bias_ok,
+            format!("计划 {}，本单 {}", p.bias, side),
+        );
+        let closed = ledger_day
+            .pairs
+            .iter()
+            .filter(|pair| pair.status == "CLOSED")
+            .count() as i64;
+        push(
+            "计划次数",
+            closed < p.max_trades,
+            format!("已做 {} / 上限 {}", closed, p.max_trades),
+        );
+        let budget_limit = (cfg.cash + cfg.base_qty as f64 * base_cost) * p.risk_budget_pct / 100.0;
+        let budget_ok = budget_limit <= 0.0 || risk.daily_pnl > -budget_limit;
+        push(
+            "计划风险预算",
+            budget_ok,
+            format!("上限 -{:.2}，当前 {:.2}", budget_limit, risk.daily_pnl),
+        );
+    } else {
+        warnings.push("未制定今日盘前计划".to_string());
+    }
 
     if let Some(t) = input.signal_t.as_deref() {
         let latest = bars.last().map(|b| b.t.as_str()).unwrap_or("");

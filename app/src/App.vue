@@ -5,6 +5,7 @@ import { fmt, money, pct } from "./lib/format";
 import IntradayChart from "./components/IntradayChart.vue";
 import KLineChart from "./components/KLineChart.vue";
 import DecisionCard from "./components/DecisionCard.vue";
+import PlanCard from "./components/PlanCard.vue";
 import Panels from "./components/Panels.vue";
 import WatchList from "./components/WatchList.vue";
 import SettingsPanel from "./components/SettingsPanel.vue";
@@ -203,6 +204,7 @@ onMounted(() => {
       </div>
 
       <aside class="side">
+        <PlanCard />
         <DecisionCard :payload="payload" :last="store.last" />
         <Panels :payload="payload" />
       </aside>

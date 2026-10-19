@@ -121,6 +121,35 @@ export interface LedgerDay {
   unresolved: number;   // 未闭环 T 笔数，次日必须提示
 }
 
+export interface PlanLevel {
+  label: string;
+  price: number;
+}
+
+export interface DailyPlan {
+  day: string;
+  symbol: string;
+  bias: string;
+  maxTrades: number;
+  riskBudgetPct: number;
+  levels: PlanLevel[];
+  note: string | null;
+  locked: boolean;
+  lockedReason: string | null;
+  updatedAt: string;
+}
+
+export interface PlanInput {
+  day: string;
+  symbol: string;
+  bias: string;
+  maxTrades: number;
+  riskBudgetPct: number;
+  levels: PlanLevel[];
+  note?: string | null;
+  reason?: string | null;
+}
+
 export interface MarketHealth {
   phase: string;
   tradingDay: boolean;

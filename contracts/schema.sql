@@ -97,6 +97,22 @@ CREATE TABLE IF NOT EXISTS trade_journal (
 CREATE UNIQUE INDEX IF NOT EXISTS uq_journal_pair
   ON trade_journal (symbol, trade_day, open_fill_id, IFNULL(close_fill_id, 0));
 
+-- 盘前计划 v1：方向偏好、关键价位、次数与风险预算；开盘后修改需理由
+CREATE TABLE IF NOT EXISTS daily_plans (
+  trade_day       TEXT    NOT NULL,
+  symbol          TEXT    NOT NULL,
+  bias            TEXT    NOT NULL DEFAULT '双向',
+  max_trades      INTEGER NOT NULL DEFAULT 4,
+  risk_budget_pct REAL    NOT NULL DEFAULT 1.0,
+  levels_json     TEXT    NOT NULL DEFAULT '[]',
+  note            TEXT,
+  locked          INTEGER NOT NULL DEFAULT 0,
+  locked_reason   TEXT,
+  created_at      TEXT    NOT NULL,
+  updated_at      TEXT    NOT NULL,
+  PRIMARY KEY (trade_day, symbol)
+);
+
 -- 信号与否决理由：没有这张表，就无法复盘"为什么没做"
 CREATE TABLE IF NOT EXISTS signals (
   id          TEXT NOT NULL,
