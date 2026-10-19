@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 
+use crate::ledger;
 use chrono::Utc;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
@@ -301,13 +302,14 @@ struct PairInfo {
     side: String,
     qty: i64,
     open_price: f64,
+    open_fee: f64,
     net: f64,
 }
 
 fn pair_info(conn: &Connection, entry: &JournalEntry) -> Result<Option<PairInfo>, String> {
     Ok(conn
         .query_row(
-            "SELECT p.side, p.qty, p.net_cents, f.price_cents
+            "SELECT p.side, p.qty, p.net_cents, f.price_cents, f.fee_cents
              FROM t_pairs p JOIN fills f ON f.id = p.open_fill_id
              WHERE p.symbol = ?1 AND p.trade_day = ?2 AND p.open_fill_id = ?3
                AND IFNULL(p.close_fill_id, 0) = IFNULL(?4, 0)
@@ -325,18 +327,11 @@ fn pair_info(conn: &Connection, entry: &JournalEntry) -> Result<Option<PairInfo>
                     qty: row.get(1)?,
                     net: row.get::<_, i64>(2)? as f64 / 100.0,
                     open_price: row.get::<_, i64>(3)? as f64 / 100.0,
+                    open_fee: row.get::<_, i64>(4)? as f64 / 100.0,
                 })
             },
         )
         .ok())
-}
-
-fn leg_pnl(side: &str, open: f64, exit: f64, qty: i64) -> f64 {
-    if side == "正T" {
-        (exit - open) * qty as f64
-    } else {
-        (open - exit) * qty as f64
-    }
 }
 
 pub fn stats(conn: &Connection, day: &str, symbol: &str) -> Result<JournalStats, String> {
@@ -370,12 +365,12 @@ pub fn stats(conn: &Connection, day: &str, symbol: &str) -> Result<JournalStats,
                 plan_trades += 1;
             }
             if let Some(target) = entry.plan_target {
-                let target_pnl = leg_pnl(&i.side, i.open_price, target, i.qty);
+                let target_pnl = ledger::plan_net(&i.side, i.open_price, target, i.qty, i.open_fee);
                 plan_target_net += target_pnl;
                 actual_vs_target += i.net - target_pnl;
             }
             if let Some(stop) = entry.plan_stop {
-                plan_stop_net += leg_pnl(&i.side, i.open_price, stop, i.qty);
+                plan_stop_net += ledger::plan_net(&i.side, i.open_price, stop, i.qty, i.open_fee);
             }
         }
         for m in &entry.mistakes {
@@ -519,9 +514,9 @@ mod tests {
         assert_eq!(s.emotions[0].name, "冷静");
         assert_eq!(s.planned_pnl.net, 43.0);
         assert_eq!(s.planned_pnl.trades, 1);
-        assert_eq!(s.plan_target_net, 200.0);
-        assert_eq!(s.plan_stop_net, -100.0);
-        assert_eq!(s.actual_vs_target, -157.0);
+        assert!((s.plan_target_net - 180.66).abs() < 0.01);
+        assert!((s.plan_stop_net + 119.13).abs() < 0.02);
+        assert!((s.actual_vs_target + 137.66).abs() < 0.01);
         assert_eq!(s.plan_trades, 1);
     }
 
@@ -538,9 +533,9 @@ mod tests {
         assert!((s.pnl_delta_avg - 73.0).abs() < 1e-9);
         assert_eq!(s.mistake_pnl[0].count, 2);
         assert_eq!(s.mistake_pnl[0].net, 13.0);
-        assert_eq!(s.plan_target_net, 300.0);
-        assert_eq!(s.plan_stop_net, -300.0);
-        assert_eq!(s.actual_vs_target, -287.0);
+        assert!((s.plan_target_net - 261.30).abs() < 0.02);
+        assert!((s.plan_stop_net + 338.28).abs() < 0.03);
+        assert!((s.actual_vs_target + 248.30).abs() < 0.02);
         assert_eq!(s.plan_trades, 2);
     }
 

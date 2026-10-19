@@ -31,6 +31,32 @@ function round2(v: number): number {
   return Math.round(v * 100) / 100;
 }
 
+function estimateFee(price: number, qty: number, side: "BUY" | "SELL"): number {
+  const notional = price * qty;
+  const commission = Math.max(notional * 0.00025, 5);
+  const transfer = notional * 0.00001;
+  return side === "SELL"
+    ? commission + notional * 0.0005 + transfer
+    : commission + transfer;
+}
+
+function planNet(
+  side: string,
+  open: number,
+  exit: number,
+  qty: number,
+  entryFee: number
+): number {
+  const gross = side === "正T" ? (exit - open) * qty : (open - exit) * qty;
+  const slip = (open + exit) * qty * 0.0002;
+  const entry =
+    entryFee > 0
+      ? entryFee
+      : estimateFee(open, qty, side === "正T" ? "BUY" : "SELL");
+  const exitFee = estimateFee(exit, qty, side === "正T" ? "SELL" : "BUY");
+  return round2(gross - slip - entry - exitFee);
+}
+
 function openPriceFor(p: TPair): number {
   return store.ledger?.fills.find((f) => f.id === p.openFillId)?.price ?? 0;
 }
@@ -76,13 +102,20 @@ const preview = computed(() => {
   const open = openPriceFor(p);
   if (open <= 0) return null;
   const dir = p.side === "正T" ? 1 : -1;
+  const openFill = store.ledger?.fills.find((f) => f.id === p.openFillId);
+  const entryFee = openFill?.fee ?? 0;
   const targetPnl =
-    form.planTarget > 0 ? (form.planTarget - open) * dir * p.qty : null;
-  const stopPnl = form.planStop > 0 ? (form.planStop - open) * dir * p.qty : null;
+    form.planTarget > 0
+      ? planNet(p.side, open, form.planTarget, p.qty, entryFee)
+      : null;
+  const stopPnl =
+    form.planStop > 0
+      ? planNet(p.side, open, form.planStop, p.qty, entryFee)
+      : null;
   const actual = p.net;
   const delta =
     actual != null && targetPnl != null ? actual - targetPnl : null;
-  return { open, targetPnl, stopPnl, actual, delta };
+  return { open, targetPnl, stopPnl, actual, delta, dir };
 });
 
 async function load(): Promise<void> {
@@ -198,6 +231,7 @@ async function remove(): Promise<void> {
           <span>止损 <b :class="(preview.stopPnl ?? 0) >= 0 ? 'pos' : 'neg'">{{ preview.stopPnl == null ? "—" : money(preview.stopPnl) }}</b></span>
           <span>实际 <b :class="(preview.actual ?? 0) >= 0 ? 'pos' : 'neg'">{{ preview.actual == null ? "未平" : money(preview.actual) }}</b></span>
           <span>实际−目标 <b :class="(preview.delta ?? 0) >= 0 ? 'pos' : 'neg'">{{ preview.delta == null ? "—" : money(preview.delta) }}</b></span>
+          <span class="dim">净额含费用</span>
         </div>
 
         <label>理由
@@ -280,8 +314,8 @@ async function remove(): Promise<void> {
       </div>
 
       <div v-if="store.journalStats.planTrades" class="plan-box">
-        <span>计划目标 {{ money(store.journalStats.planTargetNet) }}</span>
-        <span>计划止损 {{ money(store.journalStats.planStopNet) }}</span>
+        <span>计划目标(净) {{ money(store.journalStats.planTargetNet) }}</span>
+        <span>计划止损(净) {{ money(store.journalStats.planStopNet) }}</span>
         <span>
           实际−目标
           <b :class="store.journalStats.actualVsTarget >= 0 ? 'pos' : 'neg'">

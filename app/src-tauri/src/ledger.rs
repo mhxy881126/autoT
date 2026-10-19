@@ -6,6 +6,40 @@ use serde::{Deserialize, Serialize};
 
 /// 单边滑点假设：2bp。与信号引擎的成本口径保持一致。
 pub const SLIP_PER_LEG: f64 = 0.0002;
+pub const COMMISSION_RATE: f64 = 0.00025;
+pub const MIN_COMMISSION: f64 = 5.0;
+pub const STAMP_RATE: f64 = 0.0005;
+pub const TRANSFER_RATE: f64 = 0.00001;
+
+/// 按实际成交费用模型估算单边费用（买入无印花税，卖出有）。
+pub fn estimate_fee(price: f64, qty: i64, side: &str) -> f64 {
+    let notional = price * qty as f64;
+    let commission = (notional * COMMISSION_RATE).max(MIN_COMMISSION);
+    let transfer = notional * TRANSFER_RATE;
+    if side == "SELL" {
+        commission + notional * STAMP_RATE + transfer
+    } else {
+        commission + transfer
+    }
+}
+
+/// 计划平仓净盈亏：目标/止损价成交，扣双边滑点、买入费用与卖出费用。
+pub fn plan_net(side: &str, open: f64, exit: f64, qty: i64, entry_fee: f64) -> f64 {
+    let gross = if side == "正T" {
+        (exit - open) * qty as f64
+    } else {
+        (open - exit) * qty as f64
+    };
+    let slip = (open + exit) * qty as f64 * SLIP_PER_LEG;
+    let entry = if entry_fee > 0.0 {
+        entry_fee
+    } else {
+        estimate_fee(open, qty, if side == "正T" { "BUY" } else { "SELL" })
+    };
+    let exit_fee = estimate_fee(exit, qty, if side == "正T" { "SELL" } else { "BUY" });
+    let net = gross - slip - entry - exit_fee;
+    (net * 100.0).round() / 100.0
+}
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
