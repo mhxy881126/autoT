@@ -1,7 +1,15 @@
 import { defineStore } from "pinia";
 import { computed, ref } from "vue";
 import demoJson from "../data/demo.json";
-import type { DeskPayload, Fill, FillInput, LedgerDay, MinuteBar, Snapshot } from "../lib/types";
+import type {
+  DeskPayload,
+  Fill,
+  FillInput,
+  ImportResult,
+  LedgerDay,
+  MinuteBar,
+  Snapshot
+} from "../lib/types";
 import { call, isTauri, subscribeSignals, subscribeTick } from "../lib/ipc";
 
 const demo = demoJson as unknown as DeskPayload;
@@ -85,6 +93,17 @@ export const useDeskStore = defineStore("desk", () => {
     await loadLedger(day);
   }
 
+  async function importStatement(
+    day: string,
+    fileName: string,
+    bytes: number[]
+  ): Promise<ImportResult> {
+    const result = await call<ImportResult>("import_statement", { day, fileName, bytes });
+    await loadFills(day);
+    await loadLedger(day);
+    return result;
+  }
+
   return {
     payload,
     mode,
@@ -99,6 +118,7 @@ export const useDeskStore = defineStore("desk", () => {
     loadFills,
     loadLedger,
     submitFill,
-    voidFill
+    voidFill,
+    importStatement
   };
 });

@@ -4,6 +4,7 @@ mod ledger;
 mod market;
 mod session;
 mod state;
+mod statement;
 mod store;
 mod strategy;
 
@@ -25,7 +26,8 @@ pub fn run() {
             commands::list_fills,
             commands::ledger_day,
             commands::bootstrap,
-            commands::series
+            commands::series,
+            commands::import_statement
         ])
         .setup(|app| {
             let dir = app.path().app_data_dir().expect("app data dir");

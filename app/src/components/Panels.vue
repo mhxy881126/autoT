@@ -58,6 +58,34 @@ async function undoFill(id: number): Promise<void> {
   }
 }
 
+const importing = ref(false);
+const importMsg = ref("");
+
+async function onStatementFile(ev: Event): Promise<void> {
+  const input = ev.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (!file || !canWrite) return;
+  if (file.size > 2 * 1024 * 1024) {
+    importMsg.value = "文件超过 2MB，已拒绝";
+    input.value = "";
+    return;
+  }
+  importing.value = true;
+  importMsg.value = "";
+  try {
+    const buf = await file.arrayBuffer();
+    const bytes = Array.from(new Uint8Array(buf));
+    const res = await store.importStatement(props.payload.meta.date, file.name, bytes);
+    importMsg.value =
+      res.message + (res.errors.length ? `；首条：${res.errors[0]}` : "");
+  } catch (e) {
+    importMsg.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    importing.value = false;
+    input.value = "";
+  }
+}
+
 type Tab = "signals" | "test" | "book";
 const hash = typeof location !== "undefined" ? location.hash.replace("#", "") : "";
 const tab = ref<Tab>(hash === "test" || hash === "book" ? hash : "signals");
@@ -293,6 +321,17 @@ onMounted(async () => {
         </table>
 
         <div class="divider"></div>
+        <div class="lbl" style="font-size: 11px; color: #76839a">交割单导入（CSV / TXT）</div>
+        <input
+          class="file"
+          type="file"
+          accept=".csv,.txt"
+          :disabled="!canWrite || importing"
+          @change="onStatementFile"
+        />
+        <div v-if="importMsg" class="note" style="color: #c8b483">{{ importMsg }}</div>
+
+        <div class="divider"></div>
         <div class="lbl" style="font-size: 11px; color: #76839a">手工回填（无券商通道）</div>
         <div class="form">
           <div>
@@ -344,5 +383,20 @@ onMounted(async () => {
 .mini-btn:disabled {
   cursor: default;
   color: #4d5a70;
+}
+.file {
+  width: 100%;
+  font-size: 11px;
+  color: #9aa7bb;
+  margin-top: 4px;
+}
+.file::file-selector-button {
+  background: #1a2230;
+  border: 1px solid #28313f;
+  color: #9aa7bb;
+  border-radius: 3px;
+  padding: 3px 8px;
+  margin-right: 8px;
+  cursor: pointer;
 }
 </style>

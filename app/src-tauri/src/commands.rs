@@ -6,6 +6,7 @@ use crate::ledger::{self, Fill, FillInput, LedgerDay};
 use crate::market::{self, DayBar, Quote};
 use crate::session;
 use crate::state::{AppState, FeedStatus, SeriesCache};
+use crate::statement::{self, ImportResult};
 use crate::store;
 use crate::strategy::{self, Signal};
 
@@ -65,6 +66,17 @@ pub fn list_fills(state: tauri::State<'_, AppState>, day: String) -> Result<Vec<
 pub fn ledger_day(state: tauri::State<'_, AppState>, day: String) -> Result<LedgerDay, String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     ledger::day(&conn, &day, 1000, 0.0)
+}
+
+#[tauri::command]
+pub fn import_statement(
+    state: tauri::State<'_, AppState>,
+    day: String,
+    file_name: String,
+    bytes: Vec<u8>,
+) -> Result<ImportResult, String> {
+    let mut conn = state.db.lock().map_err(|e| e.to_string())?;
+    statement::import(&mut conn, &day, &file_name, &bytes)
 }
 
 pub(crate) fn fmt_day(d: &str) -> String {

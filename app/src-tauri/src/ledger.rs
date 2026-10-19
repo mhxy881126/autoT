@@ -477,6 +477,41 @@ pub fn day(
     })
 }
 
+pub fn rebuild(conn: &Connection, day: &str) -> Result<(), String> {
+    rebuild_pairs(conn, day)
+}
+
+/// 交割单导入用：只插入，不重建配对；调用方在整批导入后统一 rebuild。
+pub fn insert_imported(conn: &Connection, input: &FillInput) -> Result<bool, String> {
+    if input.qty <= 0 || input.price <= 0.0 || (input.side != "BUY" && input.side != "SELL") {
+        return Err("非法成交行".to_string());
+    }
+    let price_cents = (input.price * 100.0).round() as i64;
+    let fee_cents = (input.fee.unwrap_or(0.0) * 100.0).round() as i64;
+    let now = Utc::now().to_rfc3339();
+
+    let changed = conn
+        .execute(
+            "INSERT OR IGNORE INTO fills
+             (client_id, trade_day, ts, side, price_cents, qty, fee_cents, signal_id, source, note, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, 'import', ?8, ?9)",
+            params![
+                &input.client_id,
+                &input.day,
+                &input.t,
+                &input.side,
+                price_cents,
+                input.qty,
+                fee_cents,
+                &input.note,
+                &now
+            ],
+        )
+        .map_err(|e| format!("导入成交失败: {e}"))?;
+
+    Ok(changed == 1)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
