@@ -89,6 +89,9 @@ onMounted(() => {
       <span class="risk-label">风控</span>
       <b>禁止开仓</b>
       <span class="risk-reasons">{{ payload.risk.reasons.join("；") }}</span>
+      <span class="risk-sub">
+        已实现 {{ money(payload.risk.realizedPnl) }} · 浮动 {{ money(payload.risk.unrealizedPnl) }}
+      </span>
     </div>
 
     <div v-if="hotScans.length" class="signal-bar">
@@ -318,5 +321,11 @@ onMounted(() => {
 }
 .risk-reasons {
   color: #c98d8b;
+}
+.risk-sub {
+  margin-left: auto;
+  font: 9px Consolas, monospace;
+  color: #8f6f6d;
+  white-space: nowrap;
 }
 </style>

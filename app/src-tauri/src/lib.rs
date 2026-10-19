@@ -91,6 +91,7 @@ pub fn run() {
                 series: Mutex::new(None),
                 scan_cache: Mutex::new(std::collections::HashMap::new()),
                 scan_fail: Mutex::new(std::collections::HashMap::new()),
+                base_cost: Mutex::new(0.0),
                 last_alert: Mutex::new(std::collections::HashMap::new()),
                 audit: Mutex::new(audit_issues),
             });
@@ -185,6 +186,8 @@ pub fn run() {
                                         let day_amount =
                                             raw.last().map(|b| b.cum_amt).unwrap_or(0.0);
                                         let app_state = handle.state::<AppState>();
+                                        let base_cost =
+                                            app_state.base_cost.lock().map(|c| *c).unwrap_or(0.0);
                                         let risk_state = commands::risk_filter(
                                             &app_state,
                                             &cfg,
@@ -192,6 +195,7 @@ pub fn run() {
                                             &day_fmt,
                                             price,
                                             day_amount,
+                                            base_cost,
                                             &mut signals,
                                         );
                                         let _ = handle.emit("risk:update", &risk_state);

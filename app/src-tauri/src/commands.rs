@@ -197,23 +197,6 @@ pub async fn bootstrap(state: tauri::State<'_, AppState>) -> Result<serde_json::
         });
     }
 
-    let day_fmt = fmt_day(&day);
-    let mut signals = strategy::scan(&bars, &day_fmt, &cfg);
-    let day_amount = raw.last().map(|b| b.cum_amt).unwrap_or(0.0);
-    let risk_state = risk_filter(
-        &state,
-        &cfg,
-        &symbol,
-        &day_fmt,
-        quote.price,
-        day_amount,
-        &mut signals,
-    );
-    {
-        let mut conn = state.db.lock().map_err(|e| e.to_string())?;
-        let _ = store::save_signals(&mut conn, &day_fmt, &signals);
-    }
-
     let daily = market::fetch_daily(&state.client, &symbol, 120).await?;
     let kline = build_kline(&daily);
 
@@ -230,6 +213,25 @@ pub async fn bootstrap(state: tauri::State<'_, AppState>) -> Result<serde_json::
     } else {
         quote.prev_close
     };
+    *state.base_cost.lock().map_err(|e| e.to_string())? = base_cost;
+
+    let day_fmt = fmt_day(&day);
+    let mut signals = strategy::scan(&bars, &day_fmt, &cfg);
+    let day_amount = raw.last().map(|b| b.cum_amt).unwrap_or(0.0);
+    let risk_state = risk_filter(
+        &state,
+        &cfg,
+        &symbol,
+        &day_fmt,
+        quote.price,
+        day_amount,
+        base_cost,
+        &mut signals,
+    );
+    {
+        let mut conn = state.db.lock().map_err(|e| e.to_string())?;
+        let _ = store::save_signals(&mut conn, &day_fmt, &signals);
+    }
 
     let last = match bars.last() {
         Some(b) => json!({
@@ -648,6 +650,7 @@ pub fn risk_filter(
     day: &str,
     price: f64,
     day_amount: f64,
+    base_cost: f64,
     signals: &mut Vec<Signal>,
 ) -> RiskState {
     let ledger = state
@@ -655,9 +658,10 @@ pub fn risk_filter(
         .lock()
         .ok()
         .and_then(|conn| ledger::day(&conn, day, symbol, cfg.base_qty, cfg.base_cost).ok());
-    let equity = cfg.cash + cfg.base_qty as f64 * price;
+    let cost = if base_cost > 0.0 { base_cost } else { price };
+    let equity = cfg.cash + cfg.base_qty as f64 * cost;
     let risk = match ledger {
-        Some(day) => risk::evaluate(cfg, &day, equity, day_amount, price),
+        Some(day) => risk::evaluate(cfg, &day, equity, day_amount, price, base_cost),
         None => RiskState {
             blocked: true,
             reasons: vec!["无法读取账本，风控降级为禁止开仓".to_string()],
@@ -699,8 +703,25 @@ pub fn risk_state(
         let conn = state.db.lock().map_err(|e| e.to_string())?;
         ledger::day(&conn, &day, &symbol, cfg.base_qty, cfg.base_cost)?
     };
-    let equity = cfg.cash + cfg.base_qty as f64 * price;
-    Ok(risk::evaluate(&cfg, &ledger_day, equity, day_amount, price))
+    let base_cost = {
+        let stored = *state.base_cost.lock().map_err(|e| e.to_string())?;
+        if cfg.base_cost > 0.0 {
+            cfg.base_cost
+        } else if stored > 0.0 {
+            stored
+        } else {
+            price
+        }
+    };
+    let equity = cfg.cash + cfg.base_qty as f64 * base_cost;
+    Ok(risk::evaluate(
+        &cfg,
+        &ledger_day,
+        equity,
+        day_amount,
+        price,
+        base_cost,
+    ))
 }
 
 /// 手工回填/冲正/导入后，用当前缓存的分时重算信号与风控，避免顶栏状态过期。
@@ -726,6 +747,7 @@ pub fn refresh_signals(state: tauri::State<'_, AppState>) -> Result<serde_json::
     };
 
     let mut signals = strategy::scan(&bars, &day_fmt, &cfg);
+    let base_cost = *state.base_cost.lock().map_err(|e| e.to_string())?;
     let risk_state = risk_filter(
         &state,
         &cfg,
@@ -733,6 +755,7 @@ pub fn refresh_signals(state: tauri::State<'_, AppState>) -> Result<serde_json::
         &day_fmt,
         price,
         day_amount,
+        base_cost,
         &mut signals,
     );
     {

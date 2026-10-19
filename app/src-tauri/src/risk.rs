@@ -12,6 +12,8 @@ pub struct RiskState {
     pub blocked: bool,
     pub reasons: Vec<String>,
     pub daily_pnl: f64,
+    pub realized_pnl: f64,
+    pub unrealized_pnl: f64,
     pub daily_limit: f64,
     pub consecutive_losses: i64,
     pub trades_today: i64,
@@ -26,15 +28,33 @@ pub fn evaluate(
     equity: f64,
     day_amount: f64,
     price: f64,
+    base_cost: f64,
 ) -> RiskState {
     let mut reasons = Vec::new();
 
+    let base_float = if base_cost > 0.0 {
+        (price - base_cost) * cfg.base_qty as f64
+    } else {
+        0.0
+    };
+    let mut open_float = 0.0;
+    for pair in ledger.pairs.iter().filter(|p| p.status != "CLOSED") {
+        if let Some(fill) = ledger.fills.iter().find(|f| f.id == pair.open_fill_id) {
+            open_float += if pair.side == "正T" {
+                (price - fill.price) * pair.qty as f64
+            } else {
+                (fill.price - price) * pair.qty as f64
+            };
+        }
+    }
+    let unrealized = base_float + open_float;
+    let total_pnl = ledger.realized_net + unrealized;
+
     let daily_limit = (equity * cfg.daily_loss_limit).max(0.0);
-    let daily_pnl = ledger.realized_net;
-    if daily_limit > 0.0 && daily_pnl <= -daily_limit {
+    if daily_limit > 0.0 && total_pnl <= -daily_limit {
         reasons.push(format!(
-            "日亏损 {:.2} 已达上限 -{:.2}",
-            daily_pnl, daily_limit
+            "日亏损（含浮动）{:.2} 已达上限 -{:.2}（已实现 {:.2}，浮动 {:.2}）",
+            total_pnl, daily_limit, ledger.realized_net, unrealized
         ));
     }
 
@@ -77,7 +97,9 @@ pub fn evaluate(
     RiskState {
         blocked: !reasons.is_empty(),
         reasons,
-        daily_pnl: round2(daily_pnl),
+        daily_pnl: round2(total_pnl),
+        realized_pnl: round2(ledger.realized_net),
+        unrealized_pnl: round2(unrealized),
         daily_limit: round2(daily_limit),
         consecutive_losses,
         trades_today,
@@ -138,7 +160,7 @@ mod tests {
         let mut cfg = StrategyConfig::default();
         cfg.daily_loss_limit = 0.01;
         let l = ledger(vec![pair(Some(-1200.0), "CLOSED")]);
-        let r = evaluate(&cfg, &l, 100_000.0, 0.0, 100.0);
+        let r = evaluate(&cfg, &l, 100_000.0, 0.0, 100.0, 0.0);
         assert!(r.blocked);
         assert!(r.reasons.iter().any(|m| m.contains("日亏损")));
     }
@@ -153,7 +175,7 @@ mod tests {
             pair(Some(-20.0), "CLOSED"),
             pair(Some(-30.0), "CLOSED"),
         ]);
-        let r = evaluate(&cfg, &l, 100_000.0, 0.0, 100.0);
+        let r = evaluate(&cfg, &l, 100_000.0, 0.0, 100.0, 0.0);
         assert!(r.blocked);
         assert_eq!(r.consecutive_losses, 3);
     }
@@ -164,7 +186,7 @@ mod tests {
         cfg.max_signals = 10;
         cfg.daily_loss_limit = 0.1;
         let l = ledger(vec![]);
-        let r = evaluate(&cfg, &l, 100_000.0, 10_000.0, 100.0);
+        let r = evaluate(&cfg, &l, 100_000.0, 10_000.0, 100.0, 0.0);
         assert!(r.blocked);
         assert!(r.reasons.iter().any(|m| m.contains("成交额")));
     }
@@ -174,8 +196,20 @@ mod tests {
         let mut cfg = StrategyConfig::default();
         cfg.daily_loss_limit = 0.1;
         let l = ledger(vec![pair(Some(10.0), "CLOSED")]);
-        let r = evaluate(&cfg, &l, 100_000.0, 100_000_000.0, 100.0);
+        let r = evaluate(&cfg, &l, 100_000.0, 100_000_000.0, 100.0, 0.0);
         assert!(!r.blocked);
         assert_eq!(r.trades_today, 1);
+    }
+
+    #[test]
+    fn floating_loss_blocks() {
+        let mut cfg = StrategyConfig::default();
+        cfg.daily_loss_limit = 0.01;
+        cfg.max_signals = 10;
+        let l = ledger(vec![]);
+        let r = evaluate(&cfg, &l, 100_000.0, 0.0, 80.0, 90.0);
+        assert!(r.blocked);
+        assert!(r.unrealized_pnl < 0.0);
+        assert!(r.reasons.iter().any(|m| m.contains("浮动")));
     }
 }

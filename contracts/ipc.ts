@@ -145,6 +145,8 @@ export interface RiskState {
   blocked: boolean;
   reasons: string[];
   dailyPnl: number;
+  realizedPnl: number;
+  unrealizedPnl: number;
   dailyLimit: number;
   consecutiveLosses: number;
   tradesToday: number;
