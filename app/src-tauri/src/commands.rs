@@ -148,13 +148,13 @@ pub async fn bootstrap(state: tauri::State<'_, AppState>) -> Result<serde_json::
     };
 
     let code = symbol.get(2..).unwrap_or("").to_string();
-    let market = symbol.get(..2).unwrap_or("").to_uppercase();
+    let market_code = symbol.get(..2).unwrap_or("").to_uppercase();
 
     Ok(json!({
         "meta": {
             "symbol": quote.name,
             "code": code,
-            "market": market,
+            "market": market_code,
             "date": fmt_day(&day),
             "prevClose": quote.prev_close,
             "open": quote.open,
@@ -200,9 +200,9 @@ pub async fn series(
     {
         let cache = state.series.lock().map_err(|e| e.to_string())?;
         if let Some(c) = cache.as_ref() {
-            let hit = day
-                .as_deref()
-                .map_or(true, |d| d == c.day || d == fmt_day(&c.day));
+            let hit = day.as_deref().map_or(true, |d| {
+                d == c.day.as_str() || d == fmt_day(&c.day).as_str()
+            });
             if hit {
                 return Ok(c.bars.clone());
             }
