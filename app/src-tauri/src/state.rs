@@ -2,6 +2,7 @@ use std::sync::Mutex;
 
 use rusqlite::Connection;
 
+use crate::config::StrategyConfig;
 use crate::features::Bar;
 
 #[derive(Clone, serde::Serialize)]
@@ -23,6 +24,7 @@ pub struct SeriesCache {
 pub struct AppState {
     pub client: reqwest::Client,
     pub symbol: Mutex<String>,
+    pub config: Mutex<StrategyConfig>,
     pub feed: Mutex<FeedStatus>,
     pub db: Mutex<Connection>,
     pub series: Mutex<Option<SeriesCache>>,

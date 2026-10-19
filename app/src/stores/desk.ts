@@ -8,7 +8,8 @@ import type {
   ImportResult,
   LedgerDay,
   MinuteBar,
-  Snapshot
+  Snapshot,
+  StrategyConfig
 } from "../lib/types";
 import { call, isTauri, subscribeSignals, subscribeTick } from "../lib/ipc";
 
@@ -22,6 +23,7 @@ export const useDeskStore = defineStore("desk", () => {
   const version = ref<string>("web");
   const fills = ref<Fill[]>([]);
   const ledger = ref<LedgerDay | null>(null);
+  const config = ref<StrategyConfig | null>(null);
 
   const minutes = computed<MinuteBar[]>(() => {
     const base = payload.value.minutes.slice();
@@ -44,6 +46,7 @@ export const useDeskStore = defineStore("desk", () => {
   async function load(): Promise<void> {
     if (!isTauri()) return;
     try {
+      await loadConfig();
       const boot = await call<DeskPayload>("bootstrap");
       payload.value = boot;
       mode.value = "live";
@@ -62,8 +65,33 @@ export const useDeskStore = defineStore("desk", () => {
     }
   }
 
-  async function loadFills(day: string): Promise<void> {
+  async function loadConfig(): Promise<void> {
     if (!isTauri()) return;
+    try {
+      config.value = await call<StrategyConfig>("get_config");
+    } catch (e) {
+      bootError.value = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  async function reload(): Promise<void> {
+    if (!isTauri()) return;
+    const boot = await call<DeskPayload>("bootstrap");
+    payload.value = boot;
+    live.value = null;
+    mode.value = "live";
+    await loadFills(boot.meta.date);
+    await loadLedger(boot.meta.date);
+  }
+
+  async function saveConfig(next: StrategyConfig): Promise<StrategyConfig> {
+    const saved = await call<StrategyConfig>("update_config", { next });
+    config.value = saved;
+    await reload();
+    return saved;
+  }
+
+  async function loadFills(day: string): Promise<void> {    if (!isTauri()) return;
     try {
       fills.value = await call<Fill[]>("list_fills", { day });
     } catch (e) {
@@ -114,7 +142,11 @@ export const useDeskStore = defineStore("desk", () => {
     version,
     fills,
     ledger,
+    config,
     load,
+    loadConfig,
+    reload,
+    saveConfig,
     loadFills,
     loadLedger,
     submitFill,

@@ -1,4 +1,5 @@
 mod commands;
+mod config;
 mod features;
 mod ledger;
 mod market;
@@ -27,16 +28,20 @@ pub fn run() {
             commands::ledger_day,
             commands::bootstrap,
             commands::series,
-            commands::import_statement
+            commands::import_statement,
+            commands::get_config,
+            commands::update_config
         ])
         .setup(|app| {
             let dir = app.path().app_data_dir().expect("app data dir");
             std::fs::create_dir_all(&dir).expect("create app data dir");
             let conn = store::open(&dir.join("desk.db")).expect("open ledger db");
+            let cfg = config::load(&conn);
 
             app.manage(AppState {
                 client: market::http_client(),
-                symbol: Mutex::new("sh600519".to_string()),
+                symbol: Mutex::new(cfg.symbol.clone()),
+                config: Mutex::new(cfg),
                 feed: Mutex::new(FeedStatus {
                     connected: false,
                     source: "tencent".to_string(),
@@ -55,7 +60,14 @@ pub fn run() {
                 let mut last_refresh = Instant::now() - Duration::from_secs(120);
 
                 loop {
-                    if session::is_trading_time(&session::now_cn()) {
+                    let paused = handle
+                        .state::<AppState>()
+                        .config
+                        .lock()
+                        .map(|c| c.paused)
+                        .unwrap_or(false);
+
+                    if !paused && session::is_trading_time(&session::now_cn()) {
                         let (symbol, client) = {
                             let st = handle.state::<AppState>();
                             let symbol = st
@@ -81,7 +93,13 @@ pub fn run() {
                                     if let Some(pc) = prev_close {
                                         let bars = features::build(&raw, pc);
                                         let day_fmt = commands::fmt_day(&day);
-                                        let signals = strategy::scan(&bars, &day_fmt, 1000);
+                                        let cfg = handle
+                                            .state::<AppState>()
+                                            .config
+                                            .lock()
+                                            .map(|c| c.clone())
+                                            .unwrap_or_default();
+                                        let signals = strategy::scan(&bars, &day_fmt, &cfg);
                                         let stats = commands::stats_for(&signals);
 
                                         if let Ok(mut conn) = handle.state::<AppState>().db.lock() {

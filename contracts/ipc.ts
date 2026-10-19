@@ -118,19 +118,24 @@ export interface LedgerDay {
   unresolved: number;   // 未闭环 T 笔数，次日必须提示
 }
 
-export interface Config {
+export interface StrategyConfig {
   symbol: string;          // "sh600519"
   baseQty: number;
+  baseCost: number;        // 0 = 用近 20 日均价
+  cash: number;
   maxTRatio: number;       // 0.5
-  maxSignalsPerDay: number;
   zEntry: number;
   targetLo: number;
   targetHi: number;
   stopPct: number;
+  maxSignals: number;
   cooldownMin: number;
   sessionStart: string;    // "09:45"
   sessionEnd: string;      // "14:50"
+  paused: boolean;
 }
+
+export type Config = StrategyConfig;
 
 export interface FeedStatus {
   connected: boolean;
@@ -151,7 +156,7 @@ export interface ImportResult {
 
 export interface Bootstrap {
   version: string;
-  config: Config;
+  config: StrategyConfig;
   position: Position;
   signals: Signal[];
   snapshot: Snapshot | null;

@@ -48,6 +48,7 @@ pnpm tauri dev
 | 跨语言一致性 | ✅ CI 通过 | 真实 242 点数据，Rust 与 Python 信号逐条对齐 |
 | T 对配对 / 冲正 | ✅ CI 通过 | FIFO 配对、部分成交拆分、未闭环、void 重放 |
 | 交割单导入 | ✅ CI 通过 | CSV/TXT、GB18030 回退、表头识别、自然键去重、手工单差异提示 |
+| 配置与操作 | ✅ 本机验证 | 设置弹窗保存成功，`meta.config` 落库并重载；操作指引可打开 |
 | CI 编译门 | ✅ 全绿 | [run 39245093718](https://github.com/mhxy881126/autoT/actions/runs/39245093718)（17 单测） |
 | 安装包 / macOS 产物 | ❌ 未产出 | 需 Windows MSVC 与 macOS + Xcode，见根目录技术方案 §7 |
 
@@ -99,6 +100,13 @@ app/
 ├─ contracts/                 # 根目录：ipc.ts / schema.sql
 └─ shot.png / shot-test.png
 ```
+
+## 配置与操作
+
+- 右上角 **设置**：标的代码、底仓数量、底仓成本、可用资金、单次 T 仓上限、
+  z 入场阈值、目标价差上下限、止损、每日次数、冷却、交易时段、暂停策略。
+- 保存后写入 SQLite `meta.config`，并立即重载该标的的分时、日 K 与信号。
+- 右上角 **怎么用**：6 步操作说明（配置 → 看 regime → 读卡片 → 券商下单 → 回填/导入 → 复盘）。
 
 ## 已实现的交互
 

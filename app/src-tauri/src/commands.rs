@@ -1,6 +1,7 @@
 use serde::Serialize;
 use serde_json::json;
 
+use crate::config::{self, StrategyConfig};
 use crate::features::{self, Bar};
 use crate::ledger::{self, Fill, FillInput, LedgerDay};
 use crate::market::{self, DayBar, Quote};
@@ -138,7 +139,8 @@ pub(crate) fn stats_for(signals: &[Signal]) -> serde_json::Value {
 /// 启动时拉一次全量：快照 + 分时 + 日K，组装成前端直接可渲染的 DeskPayload。
 #[tauri::command]
 pub async fn bootstrap(state: tauri::State<'_, AppState>) -> Result<serde_json::Value, String> {
-    let symbol = state.symbol.lock().map_err(|e| e.to_string())?.clone();
+    let cfg = state.config.lock().map_err(|e| e.to_string())?.clone();
+    let symbol = cfg.symbol.clone();
     let quote = market::fetch_quote(&state.client, &symbol).await?;
     let (day, raw) = market::fetch_minute(&state.client, &symbol).await?;
     if raw.is_empty() {
@@ -161,7 +163,7 @@ pub async fn bootstrap(state: tauri::State<'_, AppState>) -> Result<serde_json::
     }
 
     let day_fmt = fmt_day(&day);
-    let signals = strategy::scan(&bars, &day_fmt, 1000);
+    let signals = strategy::scan(&bars, &day_fmt, &cfg);
     {
         let mut conn = state.db.lock().map_err(|e| e.to_string())?;
         let _ = store::save_signals(&mut conn, &day_fmt, &signals);
@@ -176,7 +178,9 @@ pub async fn bootstrap(state: tauri::State<'_, AppState>) -> Result<serde_json::
         0.0
     };
 
-    let base_cost = if daily.len() >= 20 {
+    let base_cost = if cfg.base_cost > 0.0 {
+        cfg.base_cost
+    } else if daily.len() >= 20 {
         daily[daily.len() - 20..].iter().map(|d| d.c).sum::<f64>() / 20.0
     } else {
         quote.prev_close
@@ -229,12 +233,12 @@ pub async fn bootstrap(state: tauri::State<'_, AppState>) -> Result<serde_json::
             "conclusion": conclusion
         },
         "account": {
-            "baseQty": 1000,
+            "baseQty": cfg.base_qty,
             "baseCost": base_cost,
-            "available": 1000,
-            "cash": 800000.0,
+            "available": cfg.base_qty,
+            "cash": cfg.cash,
             "lot": 200,
-            "maxTRatio": 0.5
+            "maxTRatio": cfg.max_t_ratio
         },
         "minutes": bars,
         "kline": kline,
@@ -266,7 +270,12 @@ pub async fn series(
         }
     }
 
-    let symbol = state.symbol.lock().map_err(|e| e.to_string())?.clone();
+    let symbol = state
+        .config
+        .lock()
+        .map_err(|e| e.to_string())?
+        .symbol
+        .clone();
     let quote = market::fetch_quote(&state.client, &symbol).await?;
     let (d, raw) = market::fetch_minute(&state.client, &symbol).await?;
     if raw.is_empty() {
@@ -288,4 +297,25 @@ pub async fn series(
         });
     }
     Ok(bars)
+}
+
+#[tauri::command]
+pub fn get_config(state: tauri::State<'_, AppState>) -> Result<StrategyConfig, String> {
+    Ok(state.config.lock().map_err(|e| e.to_string())?.clone())
+}
+
+#[tauri::command]
+pub fn update_config(
+    state: tauri::State<'_, AppState>,
+    next: StrategyConfig,
+) -> Result<StrategyConfig, String> {
+    config::validate(&next)?;
+    {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        config::save(&conn, &next)?;
+    }
+    *state.config.lock().map_err(|e| e.to_string())? = next.clone();
+    *state.symbol.lock().map_err(|e| e.to_string())? = next.symbol.clone();
+    *state.series.lock().map_err(|e| e.to_string())? = None;
+    Ok(next)
 }

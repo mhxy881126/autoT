@@ -1,21 +1,13 @@
 use serde::Serialize;
 
+use crate::config::StrategyConfig;
 use crate::features::Bar;
 
 /// 往返成本：佣金双边 + 印花税 + 过户费双边 + 滑点双边。
 pub const COST_PCT: f64 = 0.00025 * 2.0 + 0.0005 + 0.00001 * 2.0 + 0.0002 * 2.0;
 
-const Z_ENTRY: f64 = 1.2;
-const COOLDOWN_MIN: usize = 15;
-const MAX_SIGNALS: usize = 4;
-const TARGET_LO: f64 = 0.0045;
-const TARGET_HI: f64 = 0.0090;
-const STOP_PCT: f64 = 0.0035;
 const MIN_NET: f64 = 0.0010;
 const LOT: i64 = 200;
-const MAX_T_RATIO: f64 = 0.5;
-const START: &str = "09:45";
-const END: &str = "14:50";
 const VOL_CAP: f64 = 3.0;
 
 #[derive(Debug, Clone, Serialize)]
@@ -41,7 +33,7 @@ pub struct Signal {
 }
 
 /// 与 Python 原型 `strategy.scan` 对齐：先过 regime 门，再过成本门。
-pub fn scan(bars: &[Bar], day: &str, base_qty: i64) -> Vec<Signal> {
+pub fn scan(bars: &[Bar], day: &str, cfg: &StrategyConfig) -> Vec<Signal> {
     let mut out: Vec<Signal> = Vec::new();
     let mut last_i: isize = -999;
     let mut accepted_count = 0usize;
@@ -50,16 +42,17 @@ pub fn scan(bars: &[Bar], day: &str, base_qty: i64) -> Vec<Signal> {
         let bar = &bars[i];
         let prev = &bars[i - 1];
 
-        if bar.t.as_str() < START || bar.t.as_str() > END {
+        if bar.t.as_str() < cfg.session_start.as_str() || bar.t.as_str() > cfg.session_end.as_str()
+        {
             continue;
         }
-        if (i as isize - last_i) < COOLDOWN_MIN as isize {
+        if (i as isize - last_i) < cfg.cooldown_min as isize {
             continue;
         }
 
-        let side = if prev.z > -Z_ENTRY && bar.z <= -Z_ENTRY {
+        let side = if prev.z > -cfg.z_entry && bar.z <= -cfg.z_entry {
             "正T"
-        } else if prev.z < Z_ENTRY && bar.z >= Z_ENTRY {
+        } else if prev.z < cfg.z_entry && bar.z >= cfg.z_entry {
             "倒T"
         } else {
             continue;
@@ -84,24 +77,24 @@ pub fn scan(bars: &[Bar], day: &str, base_qty: i64) -> Vec<Signal> {
             1.0 - bar.vwap / price
         };
 
-        if raw_gross < TARGET_LO {
+        if raw_gross < cfg.target_lo {
             veto.push(format!(
                 "回归空间不足（{:.2}% < {:.2}%）",
                 raw_gross * 100.0,
-                TARGET_LO * 100.0
+                cfg.target_lo * 100.0
             ));
         }
 
-        let gross = raw_gross.max(0.0).min(TARGET_HI);
+        let gross = raw_gross.max(0.0).min(cfg.target_hi);
         let target = if side == "正T" {
             price * (1.0 + gross)
         } else {
             price * (1.0 - gross)
         };
         let stop = if side == "正T" {
-            price * (1.0 - STOP_PCT)
+            price * (1.0 - cfg.stop_pct)
         } else {
-            price * (1.0 + STOP_PCT)
+            price * (1.0 + cfg.stop_pct)
         };
         let net = gross - COST_PCT;
 
@@ -111,11 +104,11 @@ pub fn scan(bars: &[Bar], day: &str, base_qty: i64) -> Vec<Signal> {
         if bar.vol_ratio > VOL_CAP {
             veto.push(format!("放量异动（量比 {:.1}）", bar.vol_ratio));
         }
-        if accepted_count >= MAX_SIGNALS {
+        if accepted_count >= cfg.max_signals as usize {
             veto.push("今日做T次数已满".to_string());
         }
 
-        let qty = ((base_qty as f64 * MAX_T_RATIO).min(LOT as f64) as i64) / 100 * 100;
+        let qty = ((cfg.base_qty as f64 * cfg.max_t_ratio).min(LOT as f64) as i64) / 100 * 100;
         if qty <= 0 {
             veto.push("可做数量不足".to_string());
         }
@@ -194,7 +187,7 @@ mod tests {
             bar("09:50", 100.0, 100.0, 0.5, "震荡"),
             bar("09:51", 99.4, 100.0, -1.5, "震荡"),
         ];
-        let signals = scan(&bars, "2026-10-19", 1000);
+        let signals = scan(&bars, "2026-10-19", &StrategyConfig::default());
         assert_eq!(signals.len(), 1);
         let s = &signals[0];
         assert!(s.accepted);
@@ -211,7 +204,7 @@ mod tests {
             bar("09:50", 100.0, 100.0, 0.5, "下行"),
             bar("09:51", 99.4, 100.0, -1.5, "下行"),
         ];
-        let signals = scan(&bars, "2026-10-19", 1000);
+        let signals = scan(&bars, "2026-10-19", &StrategyConfig::default());
         assert_eq!(signals.len(), 1);
         assert!(!signals[0].accepted);
         assert!(signals[0].veto.iter().any(|v| v.contains("下行")));
@@ -223,7 +216,7 @@ mod tests {
             bar("09:50", 100.0, 100.0, 0.5, "震荡"),
             bar("09:51", 99.8, 100.0, -1.5, "震荡"),
         ];
-        let signals = scan(&bars, "2026-10-19", 1000);
+        let signals = scan(&bars, "2026-10-19", &StrategyConfig::default());
         assert!(!signals[0].accepted);
         assert!(signals[0].veto.iter().any(|v| v.contains("回归空间不足")));
     }
@@ -234,7 +227,7 @@ mod tests {
         bars.push(bar("09:51", 99.4, 100.0, -1.5, "震荡"));
         bars.push(bar("09:52", 100.0, 100.0, 0.6, "震荡"));
         bars.push(bar("09:53", 99.4, 100.0, -1.5, "震荡"));
-        let signals = scan(&bars, "2026-10-19", 1000);
+        let signals = scan(&bars, "2026-10-19", &StrategyConfig::default());
         assert_eq!(signals.len(), 1);
     }
 
@@ -257,7 +250,7 @@ mod tests {
             .collect();
 
         let bars = crate::features::build(&raw, prev);
-        let signals = scan(&bars, "2026-10-19", 1000);
+        let signals = scan(&bars, "2026-10-19", &StrategyConfig::default());
         let expected = v["expected"].as_array().expect("expected");
 
         assert_eq!(

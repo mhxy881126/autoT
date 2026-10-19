@@ -1,13 +1,17 @@
 <script setup lang="ts">
-import { computed, onMounted } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { useDeskStore } from "./stores/desk";
 import { fmt, money, pct } from "./lib/format";
 import IntradayChart from "./components/IntradayChart.vue";
 import KLineChart from "./components/KLineChart.vue";
 import DecisionCard from "./components/DecisionCard.vue";
 import Panels from "./components/Panels.vue";
+import SettingsPanel from "./components/SettingsPanel.vue";
+import GuidePanel from "./components/GuidePanel.vue";
 
 const store = useDeskStore();
+const showSettings = ref(false);
+const showGuide = ref(false);
 const payload = computed(() => store.payload);
 const meta = computed(() => payload.value.meta);
 const account = computed(() => payload.value.account);
@@ -37,10 +41,13 @@ onMounted(() => {
         {{ store.mode === "live" ? "实时" : "回放" }}
       </div>
       <div class="spacer"></div>
+      <button class="ghost" @click="showGuide = true">怎么用</button>
+      <button class="ghost" @click="showSettings = true">设置</button>
       <div class="quote">
         <span class="px">{{ close.toFixed(2) }}</span>
         <span class="chg" :class="chg >= 0 ? 'up' : 'down'">{{ pct(chg) }}</span>
       </div>
+      <span v-if="store.config?.paused" class="pill paused">已暂停</span>
       <span class="pill" :class="store.mode === 'live' ? 'live' : 'reject'">
         {{ store.mode === "live" ? "LIVE" : "DEMO" }}
       </span>
@@ -68,7 +75,7 @@ onMounted(() => {
       <div class="cell">
         <label>今日做T</label>
         <b :class="payload.stats.totalNet >= 0 ? 'pos' : 'neg'">{{ money(payload.stats.totalNet) }}</b>
-        <small>{{ payload.stats.filled }} / 4 次</small>
+        <small>{{ payload.stats.filled }} / {{ store.config?.maxSignals ?? 4 }} 次</small>
       </div>
       <div class="cell">
         <label>风控 / 状态</label>
@@ -124,7 +131,7 @@ onMounted(() => {
 
     <footer class="statusbar">
       <span>模式：<span class="ok">{{ store.mode === "live" ? "半自动 · Rust 实时" : "半自动 · 浏览器回放" }}</span></span>
-      <span>今日 T：<span>{{ payload.stats.filled }}</span> / 4</span>
+      <span>今日 T：<span>{{ payload.stats.filled }}</span> / {{ store.config?.maxSignals ?? 4 }}</span>
       <span>连亏：0</span>
       <span>报撤速率：0 笔/秒（监管线 300）</span>
       <span>数据：腾讯 L1 · 3 秒快照</span>
@@ -132,6 +139,9 @@ onMounted(() => {
       <span v-if="store.bootError" class="neg">IPC: {{ store.bootError }}</span>
       <span>生成于 {{ meta.generatedAt }}</span>
     </footer>
+
+    <SettingsPanel v-if="showSettings" @close="showSettings = false" />
+    <GuidePanel v-if="showGuide" @close="showGuide = false" />
   </div>
 </template>
 
@@ -140,5 +150,24 @@ onMounted(() => {
   background: rgba(103, 214, 163, 0.12);
   color: #67d6a3;
   border: 1px solid rgba(103, 214, 163, 0.3);
+}
+.pill.paused {
+  background: rgba(232, 179, 57, 0.12);
+  color: #e8b339;
+  border: 1px solid rgba(232, 179, 57, 0.3);
+}
+.ghost {
+  background: #141a24;
+  border: 1px solid #28313f;
+  color: #9aa7bb;
+  border-radius: 5px;
+  padding: 5px 12px;
+  font-size: 11px;
+  cursor: pointer;
+  margin-right: 6px;
+}
+.ghost:hover {
+  color: #dbe2ee;
+  border-color: #3a4354;
 }
 </style>
