@@ -1,4 +1,5 @@
 use std::collections::hash_map::DefaultHasher;
+use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 
 use encoding_rs::GB18030;
@@ -13,6 +14,7 @@ pub struct ImportResult {
     pub imported: i64,
     pub duplicated: i64,
     pub mismatched: i64,
+    pub manual_only: i64,
     pub rows: i64,
     pub errors: Vec<String>,
     pub message: String,
@@ -168,6 +170,32 @@ pub fn import(
     let text = decode(bytes);
     let (rows, errors, total) = parse(&text);
 
+    // 对账：手工录入但不在交割单里的成交，必须显式暴露。
+    let existing = ledger::list_by_day(conn, day)?;
+    let statement_keys: HashSet<(String, String, i64, i64)> = rows
+        .iter()
+        .map(|r| {
+            (
+                r.t.clone(),
+                r.side.clone(),
+                (r.price * 100.0).round() as i64,
+                r.qty,
+            )
+        })
+        .collect();
+    let manual_only = existing
+        .iter()
+        .filter(|f| f.source == "manual" && !f.voided)
+        .filter(|f| {
+            !statement_keys.contains(&(
+                f.t.clone(),
+                f.side.clone(),
+                (f.price * 100.0).round() as i64,
+                f.qty,
+            ))
+        })
+        .count() as i64;
+
     let tx = conn
         .transaction()
         .map_err(|e| format!("开启导入事务失败: {e}"))?;
@@ -223,19 +251,24 @@ pub fn import(
     let message = if rows.is_empty() {
         "没有识别到有效成交行，请检查表头与格式".to_string()
     } else {
-        format!(
+        let mut text = format!(
             "识别 {} 行，导入 {} 行，重复 {} 行，异常 {} 行",
             rows.len(),
             imported,
             duplicated,
             errors.len()
-        )
+        );
+        if manual_only > 0 {
+            text.push_str(&format!("；手工录入 {manual_only} 笔不在交割单中"));
+        }
+        text
     };
 
     Ok(ImportResult {
         imported,
         duplicated,
         mismatched: errors.len() as i64,
+        manual_only,
         rows: total,
         errors,
         message,
@@ -273,5 +306,30 @@ mod tests {
         let (encoded, _, _) = GB18030.encode("时间,方向,价格,数量\n09:47,买入,100,100\n");
         let text = decode(&encoded);
         assert!(text.contains("买入"));
+    }
+
+    #[test]
+    fn flags_manual_fills_missing_from_statement() {
+        let mut c = Connection::open_in_memory().expect("memory db");
+        c.execute_batch(include_str!("../../../contracts/schema.sql"))
+            .expect("schema");
+
+        let manual = FillInput {
+            client_id: "manual-1".to_string(),
+            day: "2026-10-19".to_string(),
+            t: "09:40".to_string(),
+            side: "BUY".to_string(),
+            price: 100.0,
+            qty: 100,
+            fee: Some(5.0),
+            signal_id: None,
+            note: None,
+        };
+        ledger::submit(&mut c, &manual).expect("manual fill");
+
+        let csv = "时间,方向,价格,数量\n10:00,卖出,101,100\n";
+        let result = import(&mut c, "2026-10-19", "s.csv", csv.as_bytes()).expect("import");
+        assert_eq!(result.manual_only, 1);
+        assert!(result.message.contains("不在交割单中"));
     }
 }

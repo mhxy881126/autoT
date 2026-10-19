@@ -143,6 +143,7 @@ export interface ImportResult {
   imported: number;
   duplicated: number;
   mismatched: number;
+  manualOnly: number;
   rows: number;
   errors: string[];
   message: string;
