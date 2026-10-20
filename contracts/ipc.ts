@@ -160,6 +160,26 @@ export interface PlanAudit {
   after: DailyPlan;
 }
 
+export interface StatementRowCheck {
+  line: number;
+  t: string;
+  side: string;
+  price: number;
+  qty: number;
+  already: boolean;
+  ok: boolean;
+  blockers: string[];
+  warnings: string[];
+}
+
+export interface StatementPrecheck {
+  ok: boolean;
+  total: number;
+  rows: StatementRowCheck[];
+  blockers: string[];
+  warnings: string[];
+}
+
 export interface ActionAudit {
   id: number;
   action: string;

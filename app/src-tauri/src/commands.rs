@@ -134,7 +134,40 @@ pub fn import_statement(
     bytes: Vec<u8>,
 ) -> Result<ImportResult, String> {
     let mut conn = state.db.lock().map_err(|e| e.to_string())?;
+    let cfg = config::load_for(&conn, &symbol);
+    let check = statement::precheck(
+        &conn,
+        &day,
+        &symbol,
+        &bytes,
+        cfg.cash,
+        cfg.base_qty,
+        cfg.base_cost,
+    )?;
+    if !check.ok {
+        return Err(format!("交割单预检未通过：{}", check.blockers.join("；")));
+    }
     statement::import(&mut conn, &day, &symbol, &file_name, &bytes)
+}
+
+#[tauri::command]
+pub fn precheck_statement(
+    state: tauri::State<'_, AppState>,
+    day: String,
+    symbol: String,
+    bytes: Vec<u8>,
+) -> Result<statement::StatementPrecheck, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let cfg = config::load_for(&conn, &symbol);
+    statement::precheck(
+        &conn,
+        &day,
+        &symbol,
+        &bytes,
+        cfg.cash,
+        cfg.base_qty,
+        cfg.base_cost,
+    )
 }
 
 pub(crate) fn fmt_day(d: &str) -> String {

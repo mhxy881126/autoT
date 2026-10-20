@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import * as echarts from "echarts";
-import type { DeskPayload, PrecheckResult } from "../lib/types";
+import type { DeskPayload, PrecheckResult, StatementPrecheck } from "../lib/types";
 import { fmt, money } from "../lib/format";
 import { isTauri } from "../lib/ipc";
 import { useDeskStore } from "../stores/desk";
@@ -15,6 +15,8 @@ const canWrite = isTauri();
 const submitting = ref(false);
 const msg = ref("");
 const precheck = ref<PrecheckResult | null>(null);
+const statementCheck = ref<StatementPrecheck | null>(null);
+const pendingStatement = ref<{ file: File; bytes: number[] } | null>(null);
 const form = reactive({ side: "BUY" as "BUY" | "SELL", price: 0, qty: 100, t: "" });
 
 function newId(): string {
@@ -114,17 +116,44 @@ async function onStatementFile(ev: Event): Promise<void> {
   }
   importing.value = true;
   importMsg.value = "";
+  statementCheck.value = null;
+  pendingStatement.value = null;
   try {
     const buf = await file.arrayBuffer();
     const bytes = Array.from(new Uint8Array(buf));
-    const res = await store.importStatement(props.payload.meta.date, file.name, bytes);
-    importMsg.value =
-      res.message + (res.errors.length ? `；首条：${res.errors[0]}` : "");
+    const check = await store.precheckStatement(
+      props.payload.meta.date,
+      props.payload.meta.symbolId,
+      bytes
+    );
+    statementCheck.value = check;
+    pendingStatement.value = { file, bytes };
+    importMsg.value = check.ok
+      ? `预检通过 ${check.rows.length} 条，确认后导入`
+      : `预检未通过：${check.blockers.slice(0, 3).join("；")}`;
   } catch (e) {
     importMsg.value = e instanceof Error ? e.message : String(e);
   } finally {
     importing.value = false;
     input.value = "";
+  }
+}
+
+async function confirmStatement(): Promise<void> {
+  if (!pendingStatement.value || !statementCheck.value?.ok) return;
+  importing.value = true;
+  importMsg.value = "";
+  try {
+    const { file, bytes } = pendingStatement.value;
+    const res = await store.importStatement(props.payload.meta.date, file.name, bytes);
+    importMsg.value =
+      res.message + (res.errors.length ? `；首条：${res.errors[0]}` : "");
+    pendingStatement.value = null;
+    statementCheck.value = null;
+  } catch (e) {
+    importMsg.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    importing.value = false;
   }
 }
 
@@ -411,6 +440,31 @@ onMounted(async () => {
           @change="onStatementFile"
         />
         <div v-if="importMsg" class="note" style="color: #c8b483">{{ importMsg }}</div>
+        <div v-if="statementCheck" class="stmt-check">
+          <div class="stmt-head">
+            <span>{{ statementCheck.ok ? "预检通过" : "预检未通过" }}</span>
+            <span>{{ statementCheck.rows.length }} / {{ statementCheck.total }} 条</span>
+          </div>
+          <div v-for="r in statementCheck.rows.slice(0, 10)" :key="r.line" class="stmt-row" :class="{ bad: !r.ok }">
+            <span>#{{ r.line }}</span>
+            <span>{{ r.t }} {{ r.side === "BUY" ? "买" : "卖" }}</span>
+            <span>{{ r.qty }} @ {{ r.price.toFixed(2) }}</span>
+            <span class="stmt-msg">
+              {{ r.already ? "已存在" : r.blockers[0] ?? r.warnings[0] ?? "OK" }}
+            </span>
+          </div>
+          <div v-if="statementCheck.warnings.length" class="stmt-warn">
+            {{ statementCheck.warnings.slice(0, 3).join("；") }}
+          </div>
+          <button
+            v-if="statementCheck.ok"
+            class="btn full"
+            :disabled="importing"
+            @click="confirmStatement"
+          >
+            {{ importing ? "导入中…" : `确认导入 ${statementCheck.rows.length} 条` }}
+          </button>
+        </div>
 
         <div class="divider"></div>
         <div class="lbl" style="font-size: 11px; color: #76839a">手工回填（无券商通道）</div>
@@ -488,6 +542,42 @@ onMounted(async () => {
 }
 .precheck .name {
   color: #c3cddd;
+}
+.stmt-check {
+  margin-top: 6px;
+  border: 1px solid #1d2431;
+  border-radius: 3px;
+  padding: 5px 6px;
+}
+.stmt-head {
+  display: flex;
+  justify-content: space-between;
+  font: 9px Consolas, monospace;
+  color: #9aa7bb;
+  margin-bottom: 3px;
+}
+.stmt-row {
+  display: grid;
+  grid-template-columns: 26px 62px 90px 1fr;
+  gap: 4px;
+  padding: 2px 0;
+  font: 9px Consolas, monospace;
+  color: #76839a;
+}
+.stmt-row.bad {
+  color: #ff8a87;
+}
+.stmt-msg {
+  color: #9aa7bb;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.stmt-warn {
+  margin-top: 4px;
+  color: #c8a24a;
+  font-size: 9px;
+  line-height: 1.5;
 }
 .mini-btn {
   background: #1a2230;

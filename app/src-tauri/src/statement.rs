@@ -7,6 +7,31 @@ use rusqlite::{params, Connection};
 use serde::Serialize;
 
 use crate::ledger::{self, FillInput};
+use crate::store;
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StatementRowCheck {
+    pub line: i64,
+    pub t: String,
+    pub side: String,
+    pub price: f64,
+    pub qty: i64,
+    pub already: bool,
+    pub ok: bool,
+    pub blockers: Vec<String>,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StatementPrecheck {
+    pub ok: bool,
+    pub total: i64,
+    pub rows: Vec<StatementRowCheck>,
+    pub blockers: Vec<String>,
+    pub warnings: Vec<String>,
+}
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -161,6 +186,127 @@ fn parse(text: &str) -> (Vec<ParsedRow>, Vec<String>, i64) {
     (rows, errors, total)
 }
 
+pub fn precheck(
+    conn: &rusqlite::Connection,
+    day: &str,
+    symbol: &str,
+    bytes: &[u8],
+    cash: f64,
+    base_qty: i64,
+    base_cost: f64,
+) -> Result<StatementPrecheck, String> {
+    let text = decode(bytes);
+    let (rows, parse_errors, total) = parse(&text);
+    let existing = ledger::list_by_day(conn, day, symbol)?;
+    let keys: HashSet<(String, String, i64, i64)> = existing
+        .iter()
+        .filter(|f| !f.voided)
+        .map(|f| {
+            (
+                f.t.clone(),
+                f.side.clone(),
+                (f.price * 100.0).round() as i64,
+                f.qty,
+            )
+        })
+        .collect();
+    let raw = store::load_minutes(conn, symbol, day).unwrap_or_default();
+    let amount = raw.last().map(|b| b.cum_amt).unwrap_or(0.0);
+    let low = raw.iter().map(|b| b.price).fold(f64::MAX, f64::min);
+    let high = raw.iter().map(|b| b.price).fold(f64::MIN, f64::max);
+    let mut available = ledger::day(conn, day, symbol, base_qty, base_cost)
+        .map(|d| d.position.available)
+        .unwrap_or(base_qty);
+    let mut cash_left = cash;
+    let mut blockers = Vec::new();
+    let mut warnings: Vec<String> = parse_errors.clone();
+
+    if rows.is_empty() {
+        blockers.push("没有可导入的成交行".to_string());
+    }
+    if amount <= 0.0 {
+        warnings.push(format!("{day} 无成交额或行情未缓存，跳过价格区间校验"));
+    }
+
+    let mut checks = Vec::new();
+    for (i, row) in rows.iter().enumerate() {
+        let line = i as i64 + 1;
+        let price_cents = (row.price * 100.0).round() as i64;
+        let key = (row.t.clone(), row.side.clone(), price_cents, row.qty);
+        let already = keys.contains(&key);
+        let mut row_blockers = Vec::new();
+        let mut row_warnings = Vec::new();
+
+        if row.price <= 0.0 {
+            row_blockers.push(format!("价格非法 {:.2}", row.price));
+        }
+        if row.qty <= 0 || row.qty % 100 != 0 {
+            row_blockers.push(format!("数量非整手 {}", row.qty));
+        }
+        if amount > 0.0 && raw.len() > 1 {
+            let in_range = row.price >= low * 0.995 && row.price <= high * 1.005;
+            if !in_range {
+                row_blockers.push(format!(
+                    "价格 {:.2} 不在当日区间 {:.2}–{:.2}",
+                    row.price, low, high
+                ));
+            }
+        }
+        if !already {
+            if row.side == "BUY" {
+                let need = row.price * row.qty as f64;
+                if cash_left < need {
+                    row_warnings.push(format!(
+                        "可用资金不足：需要 {:.2}，剩余 {:.2}",
+                        need, cash_left
+                    ));
+                }
+                cash_left -= need;
+            } else {
+                if available < row.qty {
+                    row_warnings.push(format!(
+                        "T+1 可用不足：需要 {}，剩余 {}",
+                        row.qty, available
+                    ));
+                }
+                available -= row.qty;
+            }
+        }
+
+        checks.push(StatementRowCheck {
+            line,
+            t: row.t.clone(),
+            side: row.side.clone(),
+            price: row.price,
+            qty: row.qty,
+            already,
+            ok: row_blockers.is_empty(),
+            blockers: row_blockers,
+            warnings: row_warnings,
+        });
+    }
+
+    for check in &checks {
+        for b in &check.blockers {
+            blockers.push(format!("第 {} 条：{b}", check.line));
+        }
+    }
+    if !parse_errors.is_empty() {
+        warnings.push(format!(
+            "解析告警 {} 条，已忽略无法识别的行",
+            parse_errors.len()
+        ));
+    }
+
+    Ok(StatementPrecheck {
+        ok: blockers.is_empty(),
+        total,
+        rows: checks,
+        blockers,
+        warnings,
+    })
+}
+
 pub fn import(
     conn: &mut Connection,
     day: &str,
@@ -280,6 +426,62 @@ pub fn import(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn db() -> Connection {
+        let c = Connection::open_in_memory().expect("memory db");
+        c.execute_batch(include_str!("../../../contracts/schema.sql"))
+            .expect("schema");
+        c.execute_batch(
+            "INSERT INTO minute_raw (symbol, trade_day, source, t, price_cents, cum_vol, cum_amt_cents)
+             VALUES ('sz000858', '2026-10-19', 'real', '09:30', 10000, 1000, 100000000);
+             INSERT INTO minute_raw (symbol, trade_day, source, t, price_cents, cum_vol, cum_amt_cents)
+             VALUES ('sz000858', '2026-10-19', 'real', '10:30', 10100, 2000, 201000000);
+             INSERT INTO minute_raw (symbol, trade_day, source, t, price_cents, cum_vol, cum_amt_cents)
+             VALUES ('sz000858', '2026-10-19', 'real', '15:00', 10050, 3000, 301500000);",
+        )
+        .expect("minutes");
+        c
+    }
+
+    #[test]
+    fn prechecks_valid_statement_rows() {
+        let c = db();
+        let csv = "成交时间,买卖标志,成交价格,成交数量,手续费\n\
+                   2026-10-19 10:00:00,买入,100.50,100,5\n\
+                   2026-10-19 10:30:00,卖出,101.00,100,5\n";
+        let check = precheck(
+            &c,
+            "2026-10-19",
+            "sz000858",
+            csv.as_bytes(),
+            1_000_000.0,
+            1000,
+            100.0,
+        )
+        .expect("precheck");
+        assert!(check.ok, "{:?}", check.blockers);
+        assert_eq!(check.rows.len(), 2);
+        assert!(check.rows.iter().all(|r| r.ok));
+    }
+
+    #[test]
+    fn rejects_statement_price_outside_day_range() {
+        let c = db();
+        let csv = "成交时间,买卖标志,成交价格,成交数量,手续费\n\
+                   2026-10-19 10:00:00,买入,200.00,100,5\n";
+        let check = precheck(
+            &c,
+            "2026-10-19",
+            "sz000858",
+            csv.as_bytes(),
+            1_000_000.0,
+            1000,
+            100.0,
+        )
+        .expect("precheck");
+        assert!(!check.ok);
+        assert!(check.blockers.iter().any(|b| b.contains("当日区间")));
+    }
 
     #[test]
     fn parses_common_broker_header() {

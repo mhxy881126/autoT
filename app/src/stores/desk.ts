@@ -31,6 +31,7 @@ import type {
   Scorecard,
   Signal,
   Snapshot,
+  StatementPrecheck,
   StrategyConfig,
   WatchItem,
   WatchScan
@@ -360,6 +361,14 @@ export const useDeskStore = defineStore("desk", () => {
     await refreshSignals().catch(() => {});
   }
 
+  async function precheckStatement(
+    day: string,
+    symbol: string,
+    bytes: number[]
+  ): Promise<StatementPrecheck> {
+    return call<StatementPrecheck>("precheck_statement", { day, symbol, bytes });
+  }
+
   async function importStatement(
     day: string,
     fileName: string,
@@ -432,6 +441,7 @@ export const useDeskStore = defineStore("desk", () => {
     submitFill,
     voidFill,
     importStatement,
+    precheckStatement,
     refreshSignals
   };
 });

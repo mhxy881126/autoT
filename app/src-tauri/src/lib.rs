@@ -49,6 +49,7 @@ pub fn run() {
             commands::bootstrap,
             commands::series,
             commands::import_statement,
+            commands::precheck_statement,
             commands::journal_upsert,
             commands::journal_list,
             commands::journal_delete,
