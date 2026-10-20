@@ -210,7 +210,14 @@ pub fn precheck(
             )
         })
         .collect();
-    let raw = store::load_minutes(conn, symbol, day).unwrap_or_default();
+    let raw = store::load_minutes(
+        conn,
+        symbol,
+        &day.chars()
+            .filter(|c| c.is_ascii_digit())
+            .collect::<String>(),
+    )
+    .unwrap_or_default();
     let amount = raw.last().map(|b| b.cum_amt).unwrap_or(0.0);
     let low = raw.iter().map(|b| b.price).fold(f64::MAX, f64::min);
     let high = raw.iter().map(|b| b.price).fold(f64::MIN, f64::max);
@@ -433,11 +440,11 @@ mod tests {
             .expect("schema");
         c.execute_batch(
             "INSERT INTO minute_raw (symbol, trade_day, source, t, price_cents, cum_vol, cum_amt_cents)
-             VALUES ('sz000858', '2026-10-19', 'real', '09:30', 10000, 1000, 100000000);
+             VALUES ('sz000858', '20261019', 'real', '09:30', 10000, 1000, 100000000);
              INSERT INTO minute_raw (symbol, trade_day, source, t, price_cents, cum_vol, cum_amt_cents)
-             VALUES ('sz000858', '2026-10-19', 'real', '10:30', 10100, 2000, 201000000);
+             VALUES ('sz000858', '20261019', 'real', '10:30', 10100, 2000, 201000000);
              INSERT INTO minute_raw (symbol, trade_day, source, t, price_cents, cum_vol, cum_amt_cents)
-             VALUES ('sz000858', '2026-10-19', 'real', '15:00', 10050, 3000, 301500000);",
+             VALUES ('sz000858', '20261019', 'real', '15:00', 10050, 3000, 301500000);",
         )
         .expect("minutes");
         c
