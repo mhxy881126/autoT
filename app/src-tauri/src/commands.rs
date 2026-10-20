@@ -15,6 +15,7 @@ use crate::audit_log::{self, ActionAudit};
 use crate::backtest;
 use crate::calendar;
 use crate::config::{self, StrategyConfig};
+use crate::execution::{self, ExecutionQuality};
 use crate::features::{self, Bar};
 use crate::history;
 use crate::journal::{self, JournalEntry, JournalInput, JournalStats};
@@ -1363,6 +1364,16 @@ pub fn precheck_order(
         warnings,
         checks,
     })
+}
+
+#[tauri::command]
+pub fn execution_quality(
+    state: tauri::State<'_, AppState>,
+    day: String,
+    symbol: String,
+) -> Result<ExecutionQuality, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    execution::compute(&conn, &day, &symbol)
 }
 
 #[tauri::command]

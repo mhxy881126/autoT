@@ -160,6 +160,46 @@ export interface PlanAudit {
   after: DailyPlan;
 }
 
+export interface SlippageRow {
+  fillId: number;
+  signalId: string;
+  side: string;
+  signalPrice: number;
+  fillPrice: number;
+  qty: number;
+  bps: number;
+}
+
+export interface SlippageStats {
+  count: number;
+  avgBps: number;
+  worstBps: number;
+  rows: SlippageRow[];
+}
+
+export interface PairQuality {
+  pairId: number;
+  side: string;
+  qty: number;
+  openT: string;
+  closeT: string;
+  openPrice: number;
+  closePrice: number;
+  net: number;
+  mfePct: number;
+  maePct: number;
+  capturePct: number;
+}
+
+export interface ExecutionQuality {
+  day: string;
+  symbol: string;
+  slippage: SlippageStats;
+  pairs: PairQuality[];
+  avgMfePct: number;
+  avgMaePct: number;
+}
+
 export interface StatementRowCheck {
   line: number;
   t: string;

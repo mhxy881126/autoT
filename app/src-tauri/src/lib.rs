@@ -5,6 +5,7 @@ mod backtest;
 mod calendar;
 mod commands;
 mod config;
+mod execution;
 mod features;
 mod history;
 mod journal;
@@ -50,6 +51,7 @@ pub fn run() {
             commands::series,
             commands::import_statement,
             commands::precheck_statement,
+            commands::execution_quality,
             commands::journal_upsert,
             commands::journal_list,
             commands::journal_delete,

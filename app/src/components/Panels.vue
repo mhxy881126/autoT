@@ -6,6 +6,7 @@ import { fmt, money } from "../lib/format";
 import { isTauri } from "../lib/ipc";
 import { useDeskStore } from "../stores/desk";
 import BacktestPanel from "./BacktestPanel.vue";
+import ExecutionPanel from "./ExecutionPanel.vue";
 import JournalPanel from "./JournalPanel.vue";
 
 const props = defineProps<{ payload: DeskPayload }>();
@@ -157,10 +158,10 @@ async function confirmStatement(): Promise<void> {
   }
 }
 
-type Tab = "signals" | "test" | "book" | "bt" | "journal";
+type Tab = "signals" | "test" | "book" | "bt" | "journal" | "exec";
 const hash = typeof location !== "undefined" ? location.hash.replace("#", "") : "";
 const tab = ref<Tab>(
-  hash === "test" || hash === "book" || hash === "bt" || hash === "journal"
+  hash === "test" || hash === "book" || hash === "bt" || hash === "journal" || hash === "exec"
     ? hash
     : "signals"
 );
@@ -264,6 +265,7 @@ onMounted(async () => {
       <button class="tab" :class="{ active: tab === 'book' }" @click="show('book')">账务 / 回填</button>
       <button class="tab" :class="{ active: tab === 'bt' }" @click="show('bt')">回测</button>
       <button class="tab" :class="{ active: tab === 'journal' }" @click="show('journal')">日志</button>
+      <button class="tab" :class="{ active: tab === 'exec' }" @click="show('exec')">质量</button>
     </div>
 
     <div class="tabbody">
@@ -338,6 +340,10 @@ onMounted(async () => {
 
       <template v-else-if="tab === 'journal'">
         <JournalPanel />
+      </template>
+
+      <template v-else-if="tab === 'exec'">
+        <ExecutionPanel />
       </template>
 
       <template v-else>

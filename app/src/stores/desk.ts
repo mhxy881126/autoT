@@ -10,6 +10,7 @@ import type {
   DeskPayload,
   DeskStats,
   DailyPlan,
+  ExecutionQuality,
   Fill,
   FillInput,
   HistoryImportResult,
@@ -67,6 +68,7 @@ export const useDeskStore = defineStore("desk", () => {
   const journalStats = ref<JournalStats | null>(null);
   const planAudit = ref<PlanAudit[]>([]);
   const actionAudit = ref<ActionAudit[]>([]);
+  const executionQuality = ref<ExecutionQuality | null>(null);
   const unread = computed(() => alerts.value.filter((a) => !a.read).length);
 
   function pushAlert(event: AlertEvent): void {
@@ -361,6 +363,11 @@ export const useDeskStore = defineStore("desk", () => {
     await refreshSignals().catch(() => {});
   }
 
+  async function loadExecution(day: string, symbol: string): Promise<void> {
+    if (!isTauri()) return;
+    executionQuality.value = await call<ExecutionQuality>("execution_quality", { day, symbol });
+  }
+
   async function precheckStatement(
     day: string,
     symbol: string,
@@ -409,6 +416,8 @@ export const useDeskStore = defineStore("desk", () => {
     loadPlanAudit,
     actionAudit,
     loadActionAudit,
+    executionQuality,
+    loadExecution,
     journal,
     journalStats,
     loadJournal,
