@@ -154,4 +154,21 @@ mod tests {
         assert!(!is_trading_day(date("2027-10-01")));
         assert!(is_trading_day(date("2027-10-08")));
     }
+
+    #[test]
+    fn holidays_are_unique_weekdays_within_coverage() {
+        use std::collections::HashSet;
+        let mut seen = HashSet::new();
+        for text in HOLIDAYS {
+            let day = date(text);
+            assert!(is_covered(day), "{text} 超出覆盖范围");
+            assert!(
+                !matches!(day.weekday(), Weekday::Sat | Weekday::Sun),
+                "{text} 是周末，不应出现在休市表"
+            );
+            assert!(seen.insert(day), "{text} 重复");
+        }
+        let count_2027 = HOLIDAYS.iter().filter(|h| h.starts_with("2027-")).count();
+        assert_eq!(count_2027, 22, "2027 预排工作日休市数应为 22");
+    }
 }
