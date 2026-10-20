@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watchEffect } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import * as echarts from "echarts";
-import type { DeskPayload } from "../lib/types";
+import type { DeskPayload, PrecheckResult } from "../lib/types";
 import { fmt, money } from "../lib/format";
 import { isTauri } from "../lib/ipc";
 import { useDeskStore } from "../stores/desk";
@@ -14,6 +14,7 @@ const store = useDeskStore();
 const canWrite = isTauri();
 const submitting = ref(false);
 const msg = ref("");
+const precheck = ref<PrecheckResult | null>(null);
 const form = reactive({ side: "BUY" as "BUY" | "SELL", price: 0, qty: 100, t: "" });
 
 function newId(): string {
@@ -22,19 +23,40 @@ function newId(): string {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-watchEffect(() => {
-  if (!form.price) form.price = Number(props.payload.last.price.toFixed(2));
-  if (!form.t) form.t = props.payload.last.t;
-});
+watch(
+  [() => props.payload.meta.symbolId, () => props.payload.meta.date],
+  () => {
+    form.price = Number(props.payload.last.price.toFixed(2));
+    form.t = props.payload.last.t;
+    precheck.value = null;
+    msg.value = "";
+  },
+  { immediate: true }
+);
 
 async function record(): Promise<void> {
   if (!canWrite || submitting.value) return;
   submitting.value = true;
   msg.value = "";
+  precheck.value = null;
   try {
+    const symbol = props.payload.meta.symbolId;
+    const result = await store.precheckOrder({
+      symbol,
+      day: props.payload.meta.date,
+      side: form.side,
+      price: Number(form.price),
+      qty: Number(form.qty),
+      mode: "backfill"
+    });
+    precheck.value = result;
+    if (!result.ok) {
+      msg.value = `预检未通过：${result.blockers.join("；")}`;
+      return;
+    }
     const fill = await store.submitFill({
       clientId: newId(),
-      symbol: store.config?.symbol ?? props.payload.meta.symbolId,
+      symbol,
       day: props.payload.meta.date,
       t: form.t,
       side: form.side,
@@ -42,7 +64,8 @@ async function record(): Promise<void> {
       qty: Number(form.qty),
       fee: 0
     });
-    msg.value = `已记录 #${fill.id} ${fill.side === "BUY" ? "买" : "卖"} ${fill.qty} @ ${fill.price.toFixed(2)}`;
+    const warn = result.warnings.length ? `；提醒：${result.warnings.join("；")}` : "";
+    msg.value = `已记录 #${fill.id} ${fill.side === "BUY" ? "买" : "卖"} ${fill.qty} @ ${fill.price.toFixed(2)}${warn}`;
   } catch (e) {
     msg.value = e instanceof Error ? e.message : String(e);
   } finally {
@@ -412,8 +435,15 @@ onMounted(async () => {
             <input v-model="form.t" :disabled="!canWrite" />
           </div>
           <button class="btn full" :disabled="!canWrite || submitting" @click="record">
-            {{ canWrite ? (submitting ? "记录中…" : "记录成交") : "记录成交（仅桌面端）" }}
+            {{ canWrite ? (submitting ? "预检 / 记录中…" : "预检并记录成交") : "记录成交（仅桌面端）" }}
           </button>
+        </div>
+        <div v-if="precheck" class="precheck">
+          <div v-for="c in precheck.checks" :key="c.name" class="check" :class="{ bad: !c.ok }">
+            <span class="mark">{{ c.ok ? "✓" : "✕" }}</span>
+            <span class="name">{{ c.name }}</span>
+            <span class="detail">{{ c.detail }}</span>
+          </div>
         </div>
         <div v-if="msg" class="note" style="color: #c8b483">{{ msg }}</div>
         <div class="note">
@@ -428,6 +458,36 @@ onMounted(async () => {
 .voided {
   opacity: 0.38;
   text-decoration: line-through;
+}
+.precheck {
+  margin-top: 6px;
+  border: 1px solid #1d2431;
+  border-radius: 3px;
+  overflow: hidden;
+}
+.precheck .check {
+  display: grid;
+  grid-template-columns: 14px 80px 1fr;
+  gap: 4px;
+  padding: 3px 6px;
+  font: 9px Consolas, monospace;
+  color: #9aa7bb;
+}
+.precheck .check + .check {
+  border-top: 1px solid #151c27;
+}
+.precheck .check.bad {
+  background: rgba(239, 83, 80, 0.08);
+  color: #ffb3b1;
+}
+.precheck .mark {
+  color: #67d6a3;
+}
+.precheck .check.bad .mark {
+  color: #ef5350;
+}
+.precheck .name {
+  color: #c3cddd;
 }
 .mini-btn {
   background: #1a2230;

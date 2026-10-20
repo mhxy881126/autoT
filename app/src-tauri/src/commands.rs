@@ -1013,6 +1013,8 @@ pub struct PrecheckInput {
     pub price: f64,
     pub qty: i64,
     #[serde(default)]
+    pub mode: Option<String>,
+    #[serde(default)]
     pub signal_id: Option<String>,
     #[serde(default)]
     pub signal_t: Option<String>,
@@ -1063,12 +1065,15 @@ pub fn precheck_order(
             None => return Err("分时缓存为空，请先刷新行情".to_string()),
         }
     };
+    let cache_day_copy = cache_day.clone();
     let day = if input.day.trim().is_empty() {
         cache_day
     } else {
         day_key(&input.day)
     };
+    let is_cached_day = day == cache_day_copy;
     let health = health_for(&state);
+    let backfill = input.mode.as_deref() == Some("backfill");
     let base_cost = {
         let stored = *state.base_cost.lock().map_err(|e| e.to_string())?;
         if cfg.base_cost > 0.0 {
@@ -1115,23 +1120,37 @@ pub fn precheck_order(
 
     push(
         "全局急停",
-        !health.emergency,
+        !health.emergency || backfill,
         if health.emergency {
-            "已开启，禁止开仓".to_string()
+            if backfill {
+                "已开启；回填仅提示，不阻止记录真实成交".to_string()
+            } else {
+                "已开启，禁止开仓".to_string()
+            }
         } else {
             "未开启".to_string()
         },
     );
-    push(
-        "交易时段",
-        health.phase == "交易",
-        format!("当前 {}", health.phase),
-    );
-    push(
-        "行情新鲜度",
-        !health.stale,
-        format!("最后分钟 {}，延迟 {}s", health.last_bar, health.age_secs),
-    );
+    if backfill {
+        push("交易时段", true, "回填模式，跳过实时时段校验".to_string());
+        push(
+            "行情新鲜度",
+            true,
+            "回填模式，跳过实时新鲜度校验".to_string(),
+        );
+        warnings.push("回填模式：跳过交易时段与行情新鲜度".to_string());
+    } else {
+        push(
+            "交易时段",
+            health.phase == "交易",
+            format!("当前 {}", health.phase),
+        );
+        push(
+            "行情新鲜度",
+            !health.stale,
+            format!("最后分钟 {}，延迟 {}s", health.last_bar, health.age_secs),
+        );
+    }
     push(
         "价格合法",
         input.price > 0.0,
@@ -1152,15 +1171,42 @@ pub fn precheck_order(
     } else {
         input.price > down + 0.001
     };
-    push(
-        if side == "BUY" {
-            "涨停限制"
+    if backfill {
+        push(
+            "涨跌停",
+            true,
+            "回填模式，跳过涨跌停校验（历史成交可能就在板上）".to_string(),
+        );
+    } else {
+        push(
+            if side == "BUY" {
+                "涨停限制"
+            } else {
+                "跌停限制"
+            },
+            limit_ok,
+            format!("昨收 {:.2}，涨停 {:.2}，跌停 {:.2}", prev_close, up, down),
+        );
+    }
+    if backfill {
+        if is_cached_day && !bars.is_empty() {
+            let high = bars.iter().map(|b| b.price).fold(f64::MIN, f64::max);
+            let low = bars.iter().map(|b| b.price).fold(f64::MAX, f64::min);
+            let in_range = input.price >= low * 0.995 && input.price <= high * 1.005;
+            push(
+                "当日价格区间",
+                in_range,
+                format!("当日 {:.2}–{:.2}，成交 {:.2}", low, high, input.price),
+            );
         } else {
-            "跌停限制"
-        },
-        limit_ok,
-        format!("昨收 {:.2}，涨停 {:.2}，跌停 {:.2}", prev_close, up, down),
-    );
+            push(
+                "当日价格区间",
+                true,
+                "历史日期未缓存，跳过区间校验".to_string(),
+            );
+        }
+    }
+
     push(
         "停牌/无成交",
         day_amount > 0.0,
@@ -1182,21 +1228,39 @@ pub fn precheck_order(
         );
     }
 
-    push(
-        "风控",
-        !risk.blocked,
-        if risk.blocked {
+    if backfill {
+        let detail = if risk.blocked {
             risk.reasons.join("；")
         } else {
             format!("日亏 {}，连亏 {}", risk.daily_pnl, risk.consecutive_losses)
-        },
-    );
+        };
+        push("风控", true, format!("回填模式仅提示：{detail}"));
+        if risk.blocked {
+            warnings.push(format!("风控已阻塞，但仍允许记录真实成交：{detail}"));
+        }
+    } else {
+        push(
+            "风控",
+            !risk.blocked,
+            if risk.blocked {
+                risk.reasons.join("；")
+            } else {
+                format!("日亏 {}，连亏 {}", risk.daily_pnl, risk.consecutive_losses)
+            },
+        );
+    }
 
     let day_plan = {
         let conn = state.db.lock().map_err(|e| e.to_string())?;
         plan::get(&conn, &day, &input.symbol)?
     };
-    if let Some(p) = day_plan {
+    if backfill {
+        push(
+            "盘前计划",
+            true,
+            "回填模式，跳过计划方向/次数/预算".to_string(),
+        );
+    } else if let Some(p) = day_plan {
         let bias_ok = match p.bias.as_str() {
             "正T" => side == "BUY",
             "倒T" => side == "SELL",
@@ -1229,17 +1293,19 @@ pub fn precheck_order(
         warnings.push("未制定今日盘前计划".to_string());
     }
 
-    if let Some(t) = input.signal_t.as_deref() {
-        let latest = bars.last().map(|b| b.t.as_str()).unwrap_or("");
-        let age = match (minute_of(t), minute_of(latest)) {
-            (Some(a), Some(b)) => b - a,
-            _ => 0,
-        };
-        push(
-            "信号时效",
-            age <= 3,
-            format!("信号 {}，最新 {}，约 {} 分钟", t, latest, age),
-        );
+    if !backfill {
+        if let Some(t) = input.signal_t.as_deref() {
+            let latest = bars.last().map(|b| b.t.as_str()).unwrap_or("");
+            let age = match (minute_of(t), minute_of(latest)) {
+                (Some(a), Some(b)) => b - a,
+                _ => 0,
+            };
+            push(
+                "信号时效",
+                age <= 3,
+                format!("信号 {}，最新 {}，约 {} 分钟", t, latest, age),
+            );
+        }
     }
 
     if let (Some(sp), Some(id)) = (input.signal_price, input.signal_id.as_deref()) {

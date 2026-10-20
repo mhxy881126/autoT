@@ -190,6 +190,7 @@ export interface PrecheckInput {
   side: "BUY" | "SELL";
   price: number;
   qty: number;
+  mode?: "ticket" | "backfill";
   signalId?: string;
   signalT?: string;
   signalPrice?: number;
