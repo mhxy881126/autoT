@@ -189,6 +189,7 @@ export interface PairQuality {
   mfePct: number;
   maePct: number;
   capturePct: number;
+  source: string;
 }
 
 export interface ExecutionQuality {

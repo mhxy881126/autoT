@@ -368,6 +368,10 @@ export const useDeskStore = defineStore("desk", () => {
     executionQuality.value = await call<ExecutionQuality>("execution_quality", { day, symbol });
   }
 
+  async function syncMinuteOhlc(): Promise<number> {
+    return call<number>("sync_minute_ohlc");
+  }
+
   async function precheckStatement(
     day: string,
     symbol: string,
@@ -418,6 +422,7 @@ export const useDeskStore = defineStore("desk", () => {
     loadActionAudit,
     executionQuality,
     loadExecution,
+    syncMinuteOhlc,
     journal,
     journalStats,
     loadJournal,

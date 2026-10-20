@@ -2,7 +2,7 @@ use std::path::Path;
 
 use rusqlite::{params, Connection};
 
-use crate::market::RawBar;
+use crate::market::{MinuteOhlc, RawBar};
 use crate::strategy::Signal;
 
 /// 打开账本并执行 schema。路径由调用方决定（app_data_dir/desk.db）。
@@ -183,6 +183,69 @@ pub fn load_minutes(conn: &Connection, symbol: &str, day: &str) -> Result<Vec<Ra
         })
         .map_err(|e| e.to_string())?;
 
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row.map_err(|e| e.to_string())?);
+    }
+    Ok(out)
+}
+
+pub fn save_ohlc(
+    conn: &mut Connection,
+    symbol: &str,
+    day: &str,
+    bars: &[MinuteOhlc],
+) -> Result<(), String> {
+    let tx = conn
+        .transaction()
+        .map_err(|e| format!("开启 OHLC 事务失败: {e}"))?;
+    tx.execute(
+        "DELETE FROM minute_ohlc WHERE symbol = ?1 AND trade_day = ?2",
+        params![symbol, day],
+    )
+    .map_err(|e| format!("清理 OHLC 失败: {e}"))?;
+    {
+        let mut stmt = tx
+            .prepare(
+                "INSERT INTO minute_ohlc
+                 (symbol, trade_day, t, open_cents, high_cents, low_cents, close_cents)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            )
+            .map_err(|e| e.to_string())?;
+        for bar in bars {
+            stmt.execute(params![
+                symbol,
+                day,
+                &bar.t,
+                (bar.open * 100.0).round() as i64,
+                (bar.high * 100.0).round() as i64,
+                (bar.low * 100.0).round() as i64,
+                (bar.close * 100.0).round() as i64
+            ])
+            .map_err(|e| format!("写入 OHLC 失败: {e}"))?;
+        }
+    }
+    tx.commit().map_err(|e| format!("提交 OHLC 失败: {e}"))
+}
+
+pub fn load_ohlc(conn: &Connection, symbol: &str, day: &str) -> Result<Vec<MinuteOhlc>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT t, open_cents, high_cents, low_cents, close_cents
+             FROM minute_ohlc WHERE symbol = ?1 AND trade_day = ?2 ORDER BY t",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map(params![symbol, day], |row| {
+            Ok(MinuteOhlc {
+                t: row.get(0)?,
+                open: row.get::<_, i64>(1)? as f64 / 100.0,
+                high: row.get::<_, i64>(2)? as f64 / 100.0,
+                low: row.get::<_, i64>(3)? as f64 / 100.0,
+                close: row.get::<_, i64>(4)? as f64 / 100.0,
+            })
+        })
+        .map_err(|e| e.to_string())?;
     let mut out = Vec::new();
     for row in rows {
         out.push(row.map_err(|e| e.to_string())?);

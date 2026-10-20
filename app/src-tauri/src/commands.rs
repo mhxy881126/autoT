@@ -264,6 +264,13 @@ pub async fn bootstrap(state: tauri::State<'_, AppState>) -> Result<serde_json::
         let mut conn = state.db.lock().map_err(|e| e.to_string())?;
         let _ = store::save_minutes(&mut conn, &symbol, &day, &raw);
     }
+    if let Ok(days) = market::fetch_minute_ohlc(&state.client, &symbol).await {
+        if let Ok(mut conn) = state.db.lock() {
+            for (ohlc_day, bars) in &days {
+                let _ = store::save_ohlc(&mut conn, &symbol, ohlc_day, bars);
+            }
+        }
+    }
 
     let bars = features::build(&raw, quote.prev_close);
     {
@@ -1364,6 +1371,24 @@ pub fn precheck_order(
         warnings,
         checks,
     })
+}
+
+#[tauri::command]
+pub async fn sync_minute_ohlc(state: tauri::State<'_, AppState>) -> Result<usize, String> {
+    let symbol = state
+        .config
+        .lock()
+        .map_err(|e| e.to_string())?
+        .symbol
+        .clone();
+    let days = market::fetch_minute_ohlc(&state.client, &symbol).await?;
+    let mut conn = state.db.lock().map_err(|e| e.to_string())?;
+    let mut rows = 0usize;
+    for (day, bars) in &days {
+        store::save_ohlc(&mut conn, &symbol, day, bars)?;
+        rows += bars.len();
+    }
+    Ok(rows)
 }
 
 #[tauri::command]

@@ -52,6 +52,7 @@ pub fn run() {
             commands::import_statement,
             commands::precheck_statement,
             commands::execution_quality,
+            commands::sync_minute_ohlc,
             commands::journal_upsert,
             commands::journal_list,
             commands::journal_delete,

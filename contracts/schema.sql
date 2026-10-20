@@ -57,6 +57,18 @@ CREATE TABLE IF NOT EXISTS minute_raw (
   PRIMARY KEY (symbol, trade_day, t)
 );
 
+-- 分钟 OHLC：腾讯 mkline 只覆盖最近约 800 根，用于 MAE/MFE 高低价
+CREATE TABLE IF NOT EXISTS minute_ohlc (
+  symbol      TEXT    NOT NULL,
+  trade_day   TEXT    NOT NULL,
+  t           TEXT    NOT NULL,
+  open_cents  INTEGER NOT NULL,
+  high_cents  INTEGER NOT NULL,
+  low_cents   INTEGER NOT NULL,
+  close_cents INTEGER NOT NULL,
+  PRIMARY KEY (symbol, trade_day, t)
+);
+
 -- 做T配对：正T=先买后卖，倒T=先卖后买
 CREATE TABLE IF NOT EXISTS t_pairs (
   id             INTEGER PRIMARY KEY AUTOINCREMENT,

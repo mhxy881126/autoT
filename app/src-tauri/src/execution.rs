@@ -41,6 +41,7 @@ pub struct PairQuality {
     pub mfe_pct: f64,
     pub mae_pct: f64,
     pub capture_pct: f64,
+    pub source: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -83,6 +84,25 @@ fn excursions(side: &str, open: f64, prices: &[f64]) -> (f64, f64) {
     }
 }
 
+fn ohlc_excursions(side: &str, open: f64, bars: &[crate::market::MinuteOhlc]) -> (f64, f64) {
+    let mut mfe = f64::MIN;
+    let mut mae = f64::MAX;
+    for bar in bars {
+        let (fav, adv) = if side == "正T" {
+            (bar.high - open, bar.low - open)
+        } else {
+            (open - bar.low, open - bar.high)
+        };
+        mfe = mfe.max(fav);
+        mae = mae.min(adv);
+    }
+    if bars.is_empty() {
+        (0.0, 0.0)
+    } else {
+        (mfe, mae)
+    }
+}
+
 fn fill_by_id<'a>(fills: &'a [Fill], id: i64) -> Option<&'a Fill> {
     fills.iter().find(|f| f.id == id && !f.voided)
 }
@@ -90,17 +110,29 @@ fn fill_by_id<'a>(fills: &'a [Fill], id: i64) -> Option<&'a Fill> {
 fn pair_quality(
     pair: &TradePair,
     fills: &[Fill],
-    bars: &[crate::market::RawBar],
+    ohlc: &[crate::market::MinuteOhlc],
+    closes: &[crate::market::RawBar],
 ) -> Option<PairQuality> {
     let open_fill = fill_by_id(fills, pair.open_fill_id)?;
     let close_id = pair.close_fill_id?;
     let close_fill = fill_by_id(fills, close_id)?;
-    let prices: Vec<f64> = bars
+    let ohlc_bars: Vec<crate::market::MinuteOhlc> = ohlc
+        .iter()
+        .filter(|b| b.t >= open_fill.t && b.t <= close_fill.t)
+        .cloned()
+        .collect();
+    let close_prices: Vec<f64> = closes
         .iter()
         .filter(|b| b.t >= open_fill.t && b.t <= close_fill.t)
         .map(|b| b.price)
         .collect();
-    let (mfe, mae) = excursions(&pair.side, open_fill.price, &prices);
+    let (mfe, mae, source) = if ohlc_bars.is_empty() {
+        let (mfe, mae) = excursions(&pair.side, open_fill.price, &close_prices);
+        (mfe, mae, "CLOSE")
+    } else {
+        let (mfe, mae) = ohlc_excursions(&pair.side, open_fill.price, &ohlc_bars);
+        (mfe, mae, "OHLC")
+    };
     let direction = if pair.side == "正T" { 1.0 } else { -1.0 };
     let gross_per_share = direction * (close_fill.price - open_fill.price);
     let capture = if mfe > 0.0 {
@@ -128,6 +160,7 @@ fn pair_quality(
             0.0
         },
         capture_pct: capture,
+        source: source.to_string(),
     })
 }
 
@@ -173,17 +206,12 @@ pub fn compute(conn: &Connection, day: &str, symbol: &str) -> Result<ExecutionQu
     };
     let worst_bps = slip_rows.first().map(|r| r.bps).unwrap_or(0.0);
 
-    let bars = store::load_minutes(
-        conn,
-        symbol,
-        &day.chars()
-            .filter(|c| c.is_ascii_digit())
-            .collect::<String>(),
-    )
-    .unwrap_or_default();
+    let key: String = day.chars().filter(|c| c.is_ascii_digit()).collect();
+    let bars = store::load_minutes(conn, symbol, &key).unwrap_or_default();
+    let ohlc = store::load_ohlc(conn, symbol, &key).unwrap_or_default();
     let mut pair_rows = Vec::new();
     for pair in pairs.iter().filter(|p| p.status == "CLOSED") {
-        if let Some(row) = pair_quality(pair, &fills, &bars) {
+        if let Some(row) = pair_quality(pair, &fills, &ohlc, &bars) {
             pair_rows.push(row);
         }
     }
@@ -277,6 +305,7 @@ mod tests {
                     voided: false,
                 },
             ],
+            &[],
             &[crate::market::RawBar {
                 t: "10:00".to_string(),
                 price: 101.0,
@@ -288,5 +317,23 @@ mod tests {
         assert!((q.mfe_pct - 1.0).abs() < 1e-9);
         assert!((q.mae_pct - 1.0).abs() < 1e-9);
         assert!((q.capture_pct - 50.0).abs() < 1e-9);
+        assert_eq!(q.source, "CLOSE");
+    }
+
+    #[test]
+    fn ohlc_uses_high_low() {
+        let bars = vec![crate::market::MinuteOhlc {
+            t: "10:00".to_string(),
+            open: 100.0,
+            high: 101.5,
+            low: 99.0,
+            close: 100.2,
+        }];
+        let (mfe, mae) = ohlc_excursions("正T", 100.0, &bars);
+        assert!((mfe - 1.5).abs() < 1e-9);
+        assert!((mae + 1.0).abs() < 1e-9);
+        let (mfe, mae) = ohlc_excursions("倒T", 100.0, &bars);
+        assert!((mfe - 1.0).abs() < 1e-9);
+        assert!((mae + 1.5).abs() < 1e-9);
     }
 }

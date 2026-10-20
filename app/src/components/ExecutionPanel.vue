@@ -1,13 +1,30 @@
 <script setup lang="ts">
-import { computed, onMounted, watch } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { money } from "../lib/format";
 import { useDeskStore } from "../stores/desk";
 
 const store = useDeskStore();
 const data = computed(() => store.executionQuality);
+const syncing = ref(false);
+const syncMsg = ref("");
 
 async function load(): Promise<void> {
   await store.loadExecution(store.payload.meta.date, store.payload.meta.symbolId);
+}
+
+async function syncOhlc(): Promise<void> {
+  if (syncing.value) return;
+  syncing.value = true;
+  syncMsg.value = "";
+  try {
+    const n = await store.syncMinuteOhlc();
+    syncMsg.value = `已同步 ${n} 根分钟 OHLC`;
+    await load();
+  } catch (e) {
+    syncMsg.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    syncing.value = false;
+  }
 }
 
 onMounted(load);
@@ -22,7 +39,11 @@ watch(
     <div class="head">
       执行质量 · <b>{{ store.payload.meta.symbolId }}</b>
       <span class="dim">{{ store.payload.meta.date }}</span>
+      <button class="sync" :disabled="syncing" @click="syncOhlc">
+        {{ syncing ? "同步中…" : "同步分钟 OHLC" }}
+      </button>
     </div>
+    <div v-if="syncMsg" class="sync-msg">{{ syncMsg }}</div>
 
     <div v-if="!data" class="empty">加载中…</div>
     <template v-else>
@@ -58,6 +79,7 @@ watch(
             <th>MFE</th>
             <th>MAE</th>
             <th>捕获</th>
+            <th>精度</th>
           </tr>
         </thead>
         <tbody>
@@ -69,6 +91,7 @@ watch(
             <td class="pos">{{ p.mfePct.toFixed(2) }}%</td>
             <td class="neg">{{ p.maePct.toFixed(2) }}%</td>
             <td>{{ p.capturePct.toFixed(0) }}%</td>
+            <td class="src">{{ p.source === "OHLC" ? "OHLC" : "收盘" }}</td>
           </tr>
         </tbody>
       </table>
@@ -97,7 +120,7 @@ watch(
       </table>
 
       <div class="note">
-        滑点按“买入成交价高于信号价 / 卖出成交价低于信号价”为正滑点（不利）。MAE/MFE 用 1 分钟收盘价近似。
+        滑点按“买入成交价高于信号价 / 卖出成交价低于信号价”为正滑点（不利）。MAE/MFE 优先用分钟 OHLC 高低价；没有 OHLC 时退回 1 分钟收盘价。
       </div>
     </template>
   </div>
@@ -116,6 +139,25 @@ watch(
   color: #5f6d84;
   font-size: 9px;
   margin-left: 6px;
+}
+.sync {
+  margin-left: 8px;
+  background: #1a2230;
+  border: 1px solid #3a4354;
+  color: #e8b339;
+  border-radius: 3px;
+  padding: 2px 8px;
+  font-size: 9px;
+  cursor: pointer;
+}
+.sync:disabled {
+  color: #5f6d84;
+  cursor: default;
+}
+.sync-msg {
+  color: #c8b483;
+  font-size: 9px;
+  margin-bottom: 4px;
 }
 .cards {
   display: grid;

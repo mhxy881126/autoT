@@ -33,6 +33,16 @@ pub struct DayBar {
     pub v: f64,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MinuteOhlc {
+    pub t: String,
+    pub open: f64,
+    pub high: f64,
+    pub low: f64,
+    pub close: f64,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Snapshot {
@@ -283,4 +293,57 @@ pub async fn fetch_quotes(
     }
 
     Ok(out)
+}
+
+/// 腾讯分钟 K：最近约 800 根，含 OHLC。用于 MAE/MFE 高低价。
+pub async fn fetch_minute_ohlc(
+    client: &reqwest::Client,
+    symbol: &str,
+) -> Result<Vec<(String, Vec<MinuteOhlc>)>, String> {
+    let url = format!(
+        "https://proxy.finance.qq.com/ifzqgtimg/appstock/app/kline/mkline?param={symbol},m1,,800"
+    );
+    let body: serde_json::Value = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| format!("分钟K请求失败: {e}"))?
+        .json()
+        .await
+        .map_err(|e| format!("分钟K解析失败: {e}"))?;
+    let rows = body["data"][symbol]["m1"]
+        .as_array()
+        .ok_or_else(|| "分钟K返回为空".to_string())?;
+    let mut map: std::collections::BTreeMap<String, Vec<MinuteOhlc>> =
+        std::collections::BTreeMap::new();
+    for row in rows {
+        let Some(fields) = row.as_array() else {
+            continue;
+        };
+        if fields.len() < 6 {
+            continue;
+        }
+        let Some(raw_time) = fields[0].as_str() else {
+            continue;
+        };
+        if raw_time.len() < 12 {
+            continue;
+        }
+        let num =
+            |i: usize| -> Option<f64> { fields[i].as_str().and_then(|s| s.parse::<f64>().ok()) };
+        let (Some(open), Some(close), Some(high), Some(low)) = (num(1), num(2), num(3), num(4))
+        else {
+            continue;
+        };
+        let day = raw_time[..8].to_string();
+        let t = format!("{}:{}", &raw_time[8..10], &raw_time[10..12]);
+        map.entry(day).or_default().push(MinuteOhlc {
+            t,
+            open,
+            high,
+            low,
+            close,
+        });
+    }
+    Ok(map.into_iter().collect())
 }
